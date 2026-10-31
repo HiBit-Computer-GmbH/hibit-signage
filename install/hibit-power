@@ -1,7 +1,11 @@
 #!/bin/bash
-# Wird als root über sudo gestartet. Erlaubt nur Neustart oder Herunterfahren.
+# Wird als root über sudo gestartet. Erlaubt nur Neustart, Herunterfahren oder das Ausblenden des Zeigers.
 set -euo pipefail
 case "${1:-}" in
+  hide-cursor)
+    INSTALL="${HIBIT_INSTALL_DIR:-/opt/hibit-signage}"
+    exec /usr/bin/python3 "$INSTALL/install/blank-cursor.py" --system
+    ;;
   reboot) exec /usr/bin/systemctl reboot ;;
   poweroff) exec /usr/bin/systemctl poweroff ;;
   *)

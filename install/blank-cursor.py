@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import struct
+import sys
 from pathlib import Path
 
 IMAGE_TYPE = 0xFFFD0002
@@ -126,5 +127,51 @@ def install() -> None:
         (root / "index.theme").write_text("[Icon Theme]\nName=hibit-blank\n", encoding="utf-8")
 
 
+def icon_root() -> Path:
+    override = os.environ.get("HIBIT_ICON_ROOT")
+    if override:
+        return Path(override)
+    return Path("/usr/share/icons")
+
+
+def install_system() -> int:
+    """Cage ignoriert XCURSOR_THEME und nimmt die Systemzeiger, auf dem Pi meist PiXflat."""
+    blob = cursor_blob()
+    icons = icon_root()
+    if not icons.is_dir():
+        print(f"Kein Symbolordner: {icons}", file=sys.stderr)
+        return 1
+    replaced = 0
+    for cursors in icons.glob("*/cursors"):
+        if not cursors.is_dir():
+            continue
+        for entry in list(cursors.iterdir()):
+            if entry.name.endswith(".hibit-orig") or entry.is_dir():
+                continue
+            if entry.is_symlink():
+                entry.unlink()
+                entry.write_bytes(blob)
+                replaced += 1
+                continue
+            if not entry.is_file():
+                continue
+            current = entry.read_bytes()
+            if current == blob:
+                continue
+            backup = cursors / f"{entry.name}.hibit-orig"
+            if not backup.exists():
+                backup.write_bytes(current)
+            entry.write_bytes(blob)
+            replaced += 1
+    theme = icons / "hibit-blank" / "cursors"
+    theme.mkdir(parents=True, exist_ok=True)
+    (theme / "left_ptr").write_bytes(blob)
+    (icons / "hibit-blank" / "index.theme").write_text("[Icon Theme]\nName=hibit-blank\n", encoding="utf-8")
+    print(f"Zeiger ersetzt: {replaced}")
+    return 0
+
+
 if __name__ == "__main__":
+    if "--system" in sys.argv:
+        raise SystemExit(install_system())
     install()

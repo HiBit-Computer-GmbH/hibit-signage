@@ -16,6 +16,8 @@ git -c safe.directory="$INSTALL" fetch origin
 git -c safe.directory="$INSTALL" pull --ff-only
 "$INSTALL/.venv/bin/pip" install -r "$INSTALL/player/requirements.txt"
 install -m 755 "$INSTALL/install/hibit-power" /usr/local/sbin/hibit-power
+install -m 755 "$INSTALL/install/hibit-update-player" /usr/local/sbin/hibit-update-player
+python3 "$INSTALL/install/blank-cursor.py" --system || true
 SYSTEMCTL="$(command -v systemctl)"
 cat >/etc/sudoers.d/hibit-signage <<EOF
 hibit ALL=(root) NOPASSWD: /usr/local/sbin/hibit-mount, /usr/local/sbin/hibit-update-player, /usr/local/sbin/hibit-power, ${SYSTEMCTL} restart hibit-kiosk

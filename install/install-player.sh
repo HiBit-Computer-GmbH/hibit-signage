@@ -89,6 +89,7 @@ chmod 750 "$DATA_DIR"
 install -m 755 "$TARGET/install/hibit-mount" /usr/local/sbin/hibit-mount
 install -m 755 "$TARGET/install/hibit-update-player" /usr/local/sbin/hibit-update-player
 install -m 755 "$TARGET/install/hibit-power" /usr/local/sbin/hibit-power
+python3 "$TARGET/install/blank-cursor.py" --system || true
 SYSTEMCTL="$(command -v systemctl)"
 cat >/etc/sudoers.d/hibit-signage <<EOF
 hibit ALL=(root) NOPASSWD: /usr/local/sbin/hibit-mount, /usr/local/sbin/hibit-update-player, /usr/local/sbin/hibit-power, ${SYSTEMCTL} restart hibit-kiosk

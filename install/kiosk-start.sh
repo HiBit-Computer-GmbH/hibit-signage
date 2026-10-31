@@ -36,10 +36,9 @@ fi
 ) &
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-python3 "$SCRIPT_DIR/blank-cursor.py"
-export XCURSOR_THEME=hibit-blank
-export XCURSOR_SIZE=24
-export XCURSOR_PATH="${HOME}/.icons:${HOME}/.local/share/icons"
+sudo -n /usr/local/sbin/hibit-power hide-cursor || python3 "$SCRIPT_DIR/blank-cursor.py" --system || true
+unset XCURSOR_THEME || true
+unset XCURSOR_PATH || true
 
 exec cage -s -- "$CHROME" \
   --kiosk \
