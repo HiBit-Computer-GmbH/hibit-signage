@@ -180,18 +180,24 @@ function queueHtml() {
   const mode = state.addMode || "image-url";
   const modes = [["image-url", "Bild-Adresse"], ["video-url", "Video-Adresse"], ["web", "Webseite"], ["local", "Lokale Datei"]];
   const rows = state.queue.map((item, index) => `<article class="card item" draggable="true" data-id="${esc(item.id)}">
-      <span class="handle" title="Ziehen">⋮⋮</span>
-      <div>
-        <div class="title">${esc(item.name)}</div>
-        <div class="meta"><span class="badge">${esc(originLabel(item))}</span> <span class="badge">${esc(kindLabel(item.kind))}</span> ${fitLabel(item) ? `<span class="badge">${fitLabel(item)}</span>` : ""} ${item.enabled ? "" : '<span class="badge warn">Pausiert</span>'}</div>
+      <div class="item-body">
+        <span class="handle" title="Ziehen">⋮⋮</span>
+        <div>
+          <div class="title">${esc(item.name)}</div>
+          <div class="meta"><span class="badge">${esc(originLabel(item))}</span> <span class="badge">${esc(kindLabel(item.kind))}</span> ${fitLabel(item) ? `<span class="badge">${fitLabel(item)}</span>` : ""} ${item.enabled ? "" : '<span class="badge warn">Pausiert</span>'}</div>
+        </div>
       </div>
-      <div class="row">
-        ${fitSelect(item)}
-        <input data-field="duration" data-id="${esc(item.id)}" type="number" min="1" max="86400" placeholder="Ende" value="${item.duration_seconds ?? ""}" title="Sekunden, bei Videos leer = bis zum Ende">
-        <button class="ghost" data-action="up" data-id="${esc(item.id)}" ${index === 0 ? "disabled" : ""}>Hoch</button>
-        <button class="ghost" data-action="down" data-id="${esc(item.id)}" ${index === state.queue.length - 1 ? "disabled" : ""}>Runter</button>
-        <button class="ghost" data-action="toggle" data-id="${esc(item.id)}">${item.enabled ? "Pause" : "Aktiv"}</button>
-        <button class="danger" data-action="delete" data-id="${esc(item.id)}">${state.confirm === item.id ? "Wirklich" : "Löschen"}</button>
+      <div class="item-tools">
+        <div class="tool-fields">
+          ${item.kind === "web" ? "" : `<label class="tool">Darstellung${fitSelect(item)}</label>`}
+          <label class="tool">Sekunden<input data-field="duration" data-id="${esc(item.id)}" type="number" min="1" max="86400" placeholder="Ende" value="${item.duration_seconds ?? ""}" title="Sekunden, bei Videos leer = bis zum Ende"></label>
+        </div>
+        <div class="actions">
+          <button class="ghost" data-action="up" data-id="${esc(item.id)}" ${index === 0 ? "disabled" : ""}>Hoch</button>
+          <button class="ghost" data-action="down" data-id="${esc(item.id)}" ${index === state.queue.length - 1 ? "disabled" : ""}>Runter</button>
+          <button class="ghost" data-action="toggle" data-id="${esc(item.id)}">${item.enabled ? "Pause" : "Aktiv"}</button>
+          <button class="danger" data-action="delete" data-id="${esc(item.id)}">${state.confirm === item.id ? "Wirklich" : "Löschen"}</button>
+        </div>
       </div>
     </article>`).join("");
   return `<div class="page-head"><div><h1>Warteschlange</h1><p class="muted">Was auf dem Bildschirm nacheinander erscheint.</p></div><a class="button ghost" href="/player/" target="_blank">Vorschau</a></div>
@@ -296,8 +302,8 @@ function systemHtml() {
       ${state.poweroff ? `<div class="confirm-box"><p>Zweite Bestätigung: der Pi wird jetzt ausgeschaltet.</p><div class="row"><button class="danger" id="poweroff-now" type="button">Wirklich herunterfahren</button><button class="ghost" id="poweroff-cancel" type="button">Abbrechen</button></div></div>` : ""}
     </section>
     <section class="card panel">
-      <div class="spread"><div><div class="title">Update aus GitHub</div><p class="muted">Zieht den aktuellen Stand und startet den Player neu.</p></div><button id="update" type="button">Update</button></div>
-      <div class="row actions-gap"><button class="ghost" id="restart-display" type="button">Anzeige neu starten</button></div>
+      <div><div class="title">Update aus GitHub</div><p class="muted">Zieht den aktuellen Stand und startet den Player neu.</p></div>
+      <div class="actions"><button id="update" type="button">Update</button><button class="ghost" id="restart-display" type="button">Anzeige neu starten</button></div>
       <pre class="log" id="update-log">${esc(state.log || "")}</pre>
     </section>`;
 }

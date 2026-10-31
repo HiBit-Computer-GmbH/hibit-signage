@@ -223,14 +223,18 @@ function queueTab() {
   const files = (state.playback && state.playback.files) || [];
   const mode = state.addMode || "image-url";
   const modes = [["image-url", "Bild-Adresse"], ["video-url", "Video-Adresse"], ["web", "Webseite"], ["local", "Lokale Datei"]];
-  const rows = items.map((item, index) => `<article class="card item"><div><div class="title">${esc(item.name)}</div><div class="meta"><span class="badge">${item.kind === "web" ? "Webseite" : item.origin === "url" ? "Adresse" : item.origin === "share" ? "Freigabe" : "Datei"}</span> <span class="badge">${esc(kindLabel(item.kind))}</span> ${item.kind === "web" ? "" : `<span class="badge">${item.fit === "cover" ? "Beschnitten" : "Ganzes Bild"}</span>`} ${item.enabled ? "" : '<span class="badge warn">Pausiert</span>'}</div></div>
-    <div class="row">
-      ${fitSelect(item)}
-      <input data-duration="${esc(item.id)}" type="number" min="1" placeholder="Ende" value="${item.duration_seconds ?? ""}" title="Sekunden">
-      <button class="ghost" data-action="up" data-id="${esc(item.id)}" ${index === 0 ? "disabled" : ""}>Hoch</button>
-      <button class="ghost" data-action="down" data-id="${esc(item.id)}" ${index === items.length - 1 ? "disabled" : ""}>Runter</button>
-      <button class="ghost" data-action="toggle" data-id="${esc(item.id)}">${item.enabled ? "Pause" : "Aktiv"}</button>
-      <button class="danger" data-action="delete" data-id="${esc(item.id)}">Löschen</button>
+  const rows = items.map((item, index) => `<article class="card item"><div class="item-body"><div><div class="title">${esc(item.name)}</div><div class="meta"><span class="badge">${item.kind === "web" ? "Webseite" : item.origin === "url" ? "Adresse" : item.origin === "share" ? "Freigabe" : "Datei"}</span> <span class="badge">${esc(kindLabel(item.kind))}</span> ${item.kind === "web" ? "" : `<span class="badge">${item.fit === "cover" ? "Beschnitten" : "Ganzes Bild"}</span>`} ${item.enabled ? "" : '<span class="badge warn">Pausiert</span>'}</div></div></div>
+    <div class="item-tools">
+      <div class="tool-fields">
+        ${item.kind === "web" ? "" : `<label class="tool">Darstellung${fitSelect(item)}</label>`}
+        <label class="tool">Sekunden<input data-duration="${esc(item.id)}" type="number" min="1" placeholder="Ende" value="${item.duration_seconds ?? ""}" title="Sekunden"></label>
+      </div>
+      <div class="actions">
+        <button class="ghost" data-action="up" data-id="${esc(item.id)}" ${index === 0 ? "disabled" : ""}>Hoch</button>
+        <button class="ghost" data-action="down" data-id="${esc(item.id)}" ${index === items.length - 1 ? "disabled" : ""}>Runter</button>
+        <button class="ghost" data-action="toggle" data-id="${esc(item.id)}">${item.enabled ? "Pause" : "Aktiv"}</button>
+        <button class="danger" data-action="delete" data-id="${esc(item.id)}">Löschen</button>
+      </div>
     </div></article>`).join("");
   return `<form class="card composer" id="enqueue-form">
       <div class="mode-menu">${modes.map(([id, label]) => `<button type="button" data-mode="${id}" class="${mode === id ? "active" : ""}">${label}</button>`).join("")}</div>
@@ -284,7 +288,7 @@ function settingsTab() {
   return `${power}<form class="card composer" id="rename-form"><label>Name<input name="name" value="${esc(device.name)}" required></label><button type="submit">Speichern</button></form>
     ${isAdmin() ? `<form class="card composer" id="move-form"><label>Mandant wechseln<select name="tenant_id">${tenantOptions(device.tenant_id)}</select></label><button class="ghost" type="submit">Verschieben</button></form>
     <section class="card panel"><div class="spread"><div><div class="title">Geräte-Update</div><p class="muted">Der Pi zieht das GitHub-Repository und startet neu.</p></div><button id="device-update" type="button">Update</button></div></section>
-    <button class="danger" id="forget" type="button">${state.confirm === "forget" ? "Wirklich entfernen" : "Gerät entfernen"}</button>` : `<p class="muted">Updates startet nur ein Cloud-Admin.</p>`}
+    <section class="card panel"><div class="spread"><div><div class="title">Gerät entfernen</div><p class="muted">Das Gerät verschwindet aus der Cloud. Ein erneuter Adopt ist danach nötig.</p></div><button class="danger" id="forget" type="button">${state.confirm === "forget" ? "Wirklich entfernen" : "Gerät entfernen"}</button></div></section>` : `<p class="muted">Updates startet nur ein Cloud-Admin.</p>`}
     <p class="meta">Hardware ${esc(device.hardware_id)} · zuletzt ${esc(when(device.last_seen))}</p>`;
 }
 
@@ -326,7 +330,7 @@ function keysHtml() {
 function systemHtml() {
   const info = state.system || {};
   return `<div class="page-head"><div><h1>Cloud-System</h1><p class="muted">Version ${esc(info.version || "")} ${info.commit ? "· " + esc(info.commit) : ""}</p></div></div>
-    <article class="card stat" style="margin-bottom:14px"><span class="muted">Speicher frei</span><b>${sizeLabel(info.disk_free)}</b></article>
+    <article class="card stat"><span class="muted">Speicher frei</span><b>${sizeLabel(info.disk_free)}</b></article>
     <section class="card panel"><div class="spread"><div><div class="title">Cloud aus GitHub updaten</div><p class="muted">Nur für Cloud-Admins. Mandanten sehen diesen Schalter nicht.</p></div><button id="cloud-update" type="button">Update</button></div>
     <pre class="log">${esc(state.log || "")}</pre></section>
     <form class="card composer" id="password-form"><h2>Eigenes Passwort</h2><div class="grid-2"><label>Aktuell<input name="current" type="password" required></label><label>Neu<input name="next" type="password" minlength="8" required></label></div><button type="submit">Ändern</button></form>`;
