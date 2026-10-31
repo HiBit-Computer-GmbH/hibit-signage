@@ -71,6 +71,7 @@ def init() -> None:
                 share_path TEXT,
                 duration_seconds INTEGER,
                 fit TEXT NOT NULL DEFAULT 'cover',
+                scroll_speed INTEGER NOT NULL DEFAULT 0,
                 muted INTEGER NOT NULL DEFAULT 0,
                 enabled INTEGER NOT NULL DEFAULT 1,
                 sort_order INTEGER NOT NULL DEFAULT 0,
@@ -100,6 +101,9 @@ def init() -> None:
             );
             """
         )
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(queue_items)")}
+        if "scroll_speed" not in columns:
+            conn.execute("ALTER TABLE queue_items ADD COLUMN scroll_speed INTEGER NOT NULL DEFAULT 0")
 
 
 def ensure_admin(password: str | None) -> tuple[bool, str | None]:
@@ -270,8 +274,8 @@ def insert_queue(item: dict) -> dict:
             """
             INSERT INTO queue_items (
                 id, name, kind, origin, url, file_id, share_id, share_path,
-                duration_seconds, fit, muted, enabled, sort_order, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                duration_seconds, fit, scroll_speed, muted, enabled, sort_order, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 item["id"],
@@ -284,6 +288,7 @@ def insert_queue(item: dict) -> dict:
                 item.get("share_path"),
                 item.get("duration_seconds"),
                 item.get("fit") or "cover",
+                int(item.get("scroll_speed") or 0),
                 1 if item.get("muted") else 0,
                 1 if item.get("enabled", True) else 0,
                 order,
@@ -298,7 +303,7 @@ def update_queue(item_id: str, fields: dict) -> dict | None:
     current = get_queue_item(item_id)
     if not current:
         return None
-    allowed = ("name", "duration_seconds", "fit", "muted", "enabled", "url")
+    allowed = ("name", "duration_seconds", "fit", "scroll_speed", "muted", "enabled", "url")
     sets = []
     values = []
     for key in allowed:
@@ -532,6 +537,7 @@ def export_state() -> dict:
                 "share_path": item.get("share_path"),
                 "duration_seconds": item.get("duration_seconds"),
                 "fit": item.get("fit") or "cover",
+                "scroll_speed": int(item.get("scroll_speed") or 0),
                 "muted": bool(item.get("muted")),
                 "enabled": bool(item.get("enabled")),
                 "sort_order": item.get("sort_order") or 0,
@@ -593,8 +599,8 @@ def replace_state(state: dict, revision: int) -> None:
                 """
                 INSERT INTO queue_items (
                     id, name, kind, origin, url, file_id, share_id, share_path,
-                    duration_seconds, fit, muted, enabled, sort_order, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    duration_seconds, fit, scroll_speed, muted, enabled, sort_order, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     item["id"],
@@ -607,6 +613,7 @@ def replace_state(state: dict, revision: int) -> None:
                     item.get("share_path"),
                     item.get("duration_seconds"),
                     item.get("fit") or "cover",
+                    int(item.get("scroll_speed") or 0),
                     1 if item.get("muted") else 0,
                     1 if item.get("enabled", True) else 0,
                     item.get("sort_order") or 0,

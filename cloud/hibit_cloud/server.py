@@ -117,6 +117,18 @@ def _duration(value, kind: str):
     return number
 
 
+def _scroll(value) -> int:
+    if value is None or value == "":
+        return 0
+    try:
+        number = int(value)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(400, "Die Scrollgeschwindigkeit ist ungültig.") from exc
+    if not 0 <= number <= 4000:
+        raise HTTPException(400, "Die Scrollgeschwindigkeit muss zwischen 0 und 4000 Pixeln pro Sekunde liegen.")
+    return number
+
+
 def _visible(user: dict, device: dict) -> bool:
     if user["role"] == "superadmin":
         return True
@@ -577,6 +589,8 @@ async def device_queue_add(device_id: str, request: Request):
     state, _revision = db.load_state(device_id)
 
     def add(entry: dict) -> None:
+        entry["scroll_speed"] = _scroll(data.get("scroll_speed"))
+
         def mutator(current: dict) -> None:
             if len(current["queue"]) >= 500:
                 raise HTTPException(400, "Die Warteschlange kann höchstens 500 Einträge haben.")
@@ -677,6 +691,8 @@ async def device_queue_patch(device_id: str, item_id: str, request: Request):
                 item["duration_seconds"] = _duration(data.get("duration_seconds"), item["kind"])
             if "fit" in data:
                 item["fit"] = "contain" if data.get("fit") == "contain" else "cover"
+            if "scroll_speed" in data:
+                item["scroll_speed"] = _scroll(data.get("scroll_speed"))
             if "muted" in data:
                 item["muted"] = bool(data.get("muted"))
             if "enabled" in data:

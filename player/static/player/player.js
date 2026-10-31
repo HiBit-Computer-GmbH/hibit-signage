@@ -1,5 +1,7 @@
+const imageClip = document.getElementById("image-clip");
 const image = document.getElementById("image");
 const video = document.getElementById("video");
+const webClip = document.getElementById("web-clip");
 const web = document.getElementById("web");
 const splash = document.getElementById("splash");
 const splashMessage = document.getElementById("splash-message");
@@ -12,12 +14,25 @@ let revision = null;
 let timer = null;
 let failures = 0;
 let playingId = null;
+let generation = 0;
+
+function resetMotion(node) {
+  node.classList.remove("pan");
+  node.style.transition = "none";
+  node.style.transform = "";
+  node.style.height = "";
+  node.style.width = "";
+  node.style.objectFit = "";
+}
 
 function showSplash(info, message) {
   clearTimeout(timer);
   progress.hidden = true;
   progress.innerHTML = "";
+  generation += 1;
+  resetMotion(image);
   image.hidden = true;
+  imageClip.hidden = true;
   video.hidden = true;
   video.pause();
   hideWeb();
@@ -35,14 +50,21 @@ function showSplash(info, message) {
 }
 
 function hideWeb() {
+  resetMotion(web);
   web.hidden = true;
+  webClip.hidden = true;
   if (web.getAttribute("src")) web.removeAttribute("src");
 }
 
 function stopMedia() {
   clearTimeout(timer);
+  generation += 1;
   video.pause();
+  resetMotion(image);
+  image.hidden = true;
+  imageClip.hidden = true;
   image.removeAttribute("src");
+  video.hidden = true;
   video.removeAttribute("src");
   video.load();
   hideWeb();
@@ -79,8 +101,47 @@ function next() {
   play();
 }
 
+function slide(node, distance, ms) {
+  if (distance < 2) return;
+  node.style.transition = "none";
+  node.style.transform = "translateY(0)";
+  requestAnimationFrame(() => {
+    node.style.transition = `transform ${ms}ms linear`;
+    node.style.transform = `translateY(-${distance}px)`;
+  });
+}
+
+function startImagePan(item, ms) {
+  resetMotion(image);
+  const speed = Number(item && item.scroll_speed) || 0;
+  if (!speed) {
+    image.style.objectFit = item && item.fit === "contain" ? "contain" : "cover";
+    return;
+  }
+  image.classList.add("pan");
+  requestAnimationFrame(() => {
+    const view = imageClip.clientHeight || window.innerHeight;
+    const height = image.clientHeight;
+    const maxShift = Math.max(0, height - view);
+    const distance = Math.min(maxShift, Math.round(speed * ms / 1000));
+    slide(image, distance, ms);
+  });
+}
+
+function startWebPan(item, ms) {
+  resetMotion(web);
+  const speed = Number(item && item.scroll_speed) || 0;
+  if (!speed) return;
+  const view = webClip.clientHeight || window.innerHeight;
+  const distance = Math.min(30000, Math.round(speed * ms / 1000));
+  web.classList.add("pan");
+  web.style.height = `${view + distance}px`;
+  slide(web, distance, ms);
+}
+
 function play() {
   clearTimeout(timer);
+  const token = ++generation;
   const item = items[index];
   if (!item || !item.src) {
     fail();
@@ -90,12 +151,16 @@ function play() {
   playingId = item.id;
   const fit = item.fit === "contain" ? "contain" : "cover";
   if (item.kind === "web") {
+    resetMotion(image);
     image.hidden = true;
+    imageClip.hidden = true;
     video.hidden = true;
     video.pause();
+    webClip.hidden = false;
     web.hidden = false;
-    if (web.getAttribute("src") !== item.src) web.src = item.src;
     const duration = (item.duration_seconds || 30) * 1000;
+    startWebPan(item, duration);
+    if (web.getAttribute("src") !== item.src) web.src = item.src;
     animateProgress(duration);
     timer = setTimeout(next, duration);
     failures = 0;
@@ -103,7 +168,9 @@ function play() {
   }
   hideWeb();
   if (item.kind === "video") {
+    resetMotion(image);
     image.hidden = true;
+    imageClip.hidden = true;
     video.hidden = false;
     video.style.objectFit = fit;
     video.muted = Boolean(item.muted);
@@ -120,19 +187,26 @@ function play() {
   }
   video.pause();
   video.hidden = true;
+  image.dataset.token = String(token);
+  imageClip.hidden = false;
   image.hidden = false;
   image.style.objectFit = fit;
-  image.src = item.src;
   const duration = (item.duration_seconds || 10) * 1000;
+  const show = () => {
+    if (image.dataset.token !== String(generation)) return;
+    failures = 0;
+    startImagePan(item, duration);
+  };
+  image.onload = show;
+  if (image.getAttribute("src") !== item.src) image.src = item.src;
+  if (image.complete && image.naturalWidth) show();
   animateProgress(duration);
   timer = setTimeout(next, duration);
 }
 
-image.addEventListener("load", () => {
-  failures = 0;
-});
 image.addEventListener("error", () => {
-  if (!image.hidden) fail();
+  if (image.hidden || image.dataset.token !== String(generation)) return;
+  fail();
 });
 video.addEventListener("playing", () => {
   failures = 0;

@@ -197,25 +197,29 @@ function enqueueFields(files) {
     return `<div class="grid-2">
       <label>Datei<select name="file_id" required>${options}</select></label>
       <label>Sekunden<input name="duration_seconds" type="number" min="1" value="10"></label>
+      <label>Scroll px/s<input name="scroll_speed" type="number" min="0" max="4000" value="0"></label>
     </div>
-    <label class="check"><input type="checkbox" name="fit_screen" checked> An Auflösung anpassen</label>`;
+    <label class="check"><input type="checkbox" name="fit_screen" checked> An Auflösung anpassen</label>
+    <p class="muted">Scroll px/s schiebt Bilder nach unten. 0 bleibt stehen.</p>`;
   }
   if (mode === "web") {
     return `<div class="grid-2">
       <label>Name<input name="name" placeholder="Optional"></label>
       <label>Adresse<input name="url" type="url" placeholder="https://example.com" required></label>
       <label>Sekunden<input name="duration_seconds" type="number" min="1" value="60" required></label>
+      <label>Scroll px/s<input name="scroll_speed" type="number" min="0" max="4000" value="0"></label>
     </div>
-    <p class="muted">Seiten, die eine Einbettung verbieten, bleiben leer.</p>`;
+    <p class="muted">Seiten, die eine Einbettung verbieten, bleiben leer. Scroll px/s schiebt die Seite nach unten, 0 bleibt oben.</p>`;
   }
   const image = mode === "image-url";
   return `<div class="grid-2">
     <label>Name<input name="name" placeholder="Optional"></label>
     <label>Adresse<input name="url" type="url" placeholder="${image ? "https://…/bild.jpg" : "https://…/clip.mp4"}" required></label>
     <label>Sekunden<input name="duration_seconds" type="number" min="1" value="${image ? "10" : ""}" placeholder="${image ? "" : "bis zum Ende"}"></label>
+    ${image ? `<label>Scroll px/s<input name="scroll_speed" type="number" min="0" max="4000" value="0"></label>` : ""}
   </div>
   <label class="check"><input type="checkbox" name="fit_screen" ${image ? "checked" : ""}> An Auflösung anpassen</label>
-  <p class="muted">Das ganze Bild bleibt sichtbar. Ohne Haken füllt es den Bildschirm und wird beschnitten.</p>`;
+  <p class="muted">${image ? "Das ganze Bild bleibt sichtbar. Ohne Haken füllt es den Bildschirm und wird beschnitten. Scroll px/s schiebt es nach unten, 0 bleibt stehen." : "Ohne Haken füllt das Video den Bildschirm und wird beschnitten."}</p>`;
 }
 
 function queueTab() {
@@ -228,6 +232,7 @@ function queueTab() {
       <div class="tool-fields">
         ${item.kind === "web" ? "" : `<label class="tool">Darstellung${fitSelect(item)}</label>`}
         <label class="tool">Sekunden<input data-duration="${esc(item.id)}" type="number" min="1" placeholder="Ende" value="${item.duration_seconds ?? ""}" title="Sekunden"></label>
+        ${item.kind === "video" ? "" : `<label class="tool">Scroll px/s<input data-field="scroll" data-id="${esc(item.id)}" type="number" min="0" max="4000" value="${item.scroll_speed || 0}" title="Pixel pro Sekunde, 0 bleibt stehen"></label>`}
       </div>
       <div class="actions">
         <button class="ghost" data-action="up" data-id="${esc(item.id)}" ${index === 0 ? "disabled" : ""}>Hoch</button>
@@ -454,11 +459,12 @@ function bindQueue() {
     event.preventDefault();
     const mode = state.addMode || "image-url";
     const fit = form.fit_screen && form.fit_screen.checked ? "contain" : "cover";
+    const scroll = form.scroll_speed ? form.scroll_speed.value : 0;
     let body;
     if (mode === "local") {
-      body = { origin: "local", file_id: form.file_id.value, duration_seconds: form.duration_seconds.value, fit };
+      body = { origin: "local", file_id: form.file_id.value, duration_seconds: form.duration_seconds.value, fit, scroll_speed: scroll };
     } else if (mode === "web") {
-      body = { origin: "url", kind: "web", name: form.name.value, url: form.url.value, duration_seconds: form.duration_seconds.value };
+      body = { origin: "url", kind: "web", name: form.name.value, url: form.url.value, duration_seconds: form.duration_seconds.value, scroll_speed: scroll };
     } else {
       body = {
         origin: "url",
@@ -467,6 +473,7 @@ function bindQueue() {
         url: form.url.value,
         duration_seconds: form.duration_seconds.value,
         fit,
+        scroll_speed: scroll,
       };
     }
     try {
@@ -503,10 +510,15 @@ function bindQueue() {
   document.getElementById("queue-list").addEventListener("change", async (event) => {
     const input = event.target.closest("[data-duration]");
     const fit = event.target.closest("[data-field='fit']");
+    const scroll = event.target.closest("[data-field='scroll']");
     try {
       if (input) {
         await api(`/api/devices/${deviceId()}/queue/${input.dataset.duration}`, { method: "PATCH", body: { duration_seconds: input.value } });
         toast("Dauer gespeichert");
+      }
+      if (scroll) {
+        await api(`/api/devices/${deviceId()}/queue/${scroll.dataset.id}`, { method: "PATCH", body: { scroll_speed: scroll.value } });
+        toast(Number(scroll.value) > 0 ? "Scrollgeschwindigkeit gespeichert" : "Scroll aus");
       }
       if (fit) {
         await api(`/api/devices/${deviceId()}/queue/${fit.dataset.id}`, { method: "PATCH", body: { fit: fit.value } });

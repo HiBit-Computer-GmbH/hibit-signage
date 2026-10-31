@@ -10,13 +10,15 @@ import shutil
 import subprocess
 import sys
 import time
+import urllib.error
+import urllib.request
 import uuid
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 from urllib.parse import quote, urlparse
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 
 from hibit_player import agent, db, mounts, power, updater
 from hibit_player.shell import shells
@@ -119,13 +121,27 @@ def _duration(value, kind: str):
     return number
 
 
+def _scroll(value) -> int:
+    if value is None or value == "":
+        return 0
+    try:
+        number = int(value)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(400, "Die Scrollgeschwindigkeit ist ungültig.") from exc
+    if not 0 <= number <= 4000:
+        raise HTTPException(400, "Die Scrollgeschwindigkeit muss zwischen 0 und 4000 Pixeln pro Sekunde liegen.")
+    return number
+
+
 def _playlist() -> dict:
     items = []
     for item in db.list_queue():
         if not item["enabled"]:
             continue
         src = None
-        if item["origin"] == "url":
+        if item["origin"] == "url" and item.get("kind") in {"image", "video"} and item.get("url"):
+            src = "/media/remote?u=" + quote(item["url"], safe="")
+        elif item["origin"] == "url":
             src = item.get("url")
         elif item["origin"] == "local" and item.get("file_id"):
             media = db.get_file(item["file_id"])
@@ -141,6 +157,7 @@ def _playlist() -> dict:
                 "src": src,
                 "duration_seconds": item.get("duration_seconds"),
                 "fit": item.get("fit") or "cover",
+                "scroll_speed": int(item.get("scroll_speed") or 0),
                 "muted": bool(item.get("muted")),
             }
         )
@@ -340,6 +357,7 @@ async def queue_add(request: Request):
         }
     else:
         raise HTTPException(400, "Unbekannte Herkunft.")
+    item["scroll_speed"] = _scroll(data.get("scroll_speed"))
     try:
         created = db.insert_queue(item)
     except ValueError as exc:
@@ -361,6 +379,8 @@ async def queue_patch(item_id: str, request: Request):
         fields["duration_seconds"] = _duration(data.get("duration_seconds"), current["kind"])
     if "fit" in data:
         fields["fit"] = "contain" if data.get("fit") == "contain" else "cover"
+    if "scroll_speed" in data:
+        fields["scroll_speed"] = _scroll(data.get("scroll_speed"))
     if "muted" in data:
         fields["muted"] = bool(data.get("muted"))
     if "enabled" in data:
@@ -461,6 +481,88 @@ def media_local(stored_name: str):
         raise HTTPException(404, "Datei nicht gefunden")
     media_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
     return FileResponse(path, media_type=media_type)
+
+
+def _reject_remote(url: str) -> str | None:
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        return "Die Adresse ist ungültig."
+    host = parsed.hostname.lower().strip("[]")
+    try:
+        remote_port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    except ValueError:
+        return "Die Adresse ist ungültig."
+    if host in {"localhost", "127.0.0.1", "::1"} and remote_port == port():
+        return "Diese Adresse kann der Player nicht laden."
+    if host in {"169.254.169.254", "metadata.google.internal"}:
+        return "Diese Adresse ist nicht erlaubt."
+    return None
+
+
+class _RemoteRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        reason = _reject_remote(newurl)
+        if reason:
+            raise urllib.error.HTTPError(req.full_url, 403, reason, headers, fp)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def _remote_allowed(url: str) -> bool:
+    for item in db.list_queue():
+        if item.get("enabled") and item.get("origin") == "url" and item.get("kind") in {"image", "video"} and item.get("url") == url:
+            return True
+    return False
+
+
+@app.get("/media/remote")
+def media_remote(u: str, request: Request):
+    target = u.strip()
+    if not _remote_allowed(target):
+        raise HTTPException(404, "Diese Adresse ist nicht in der Warteschlange.")
+    reason = _reject_remote(target)
+    if reason:
+        raise HTTPException(400, reason)
+    headers = {
+        "User-Agent": "Mozilla/5.0 (X11; Linux aarch64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36 HiBitSignage",
+        "Accept": "image/avif,image/webp,image/*,video/*,*/*;q=0.8",
+    }
+    if request.headers.get("range"):
+        headers["Range"] = request.headers["range"]
+    opener = urllib.request.build_opener(_RemoteRedirect)
+    upstream = urllib.request.Request(target, headers=headers)
+    try:
+        response = opener.open(upstream, timeout=30)
+    except urllib.error.HTTPError as exc:
+        log.warning("Adresse abgelehnt: %s", urlparse(target).netloc)
+        raise HTTPException(502, "Die Adresse hat den Inhalt abgelehnt.") from exc
+    except Exception as exc:
+        log.warning("Adresse nicht erreichbar: %s", urlparse(target).netloc)
+        raise HTTPException(502, "Die Adresse ist nicht erreichbar.") from exc
+    content_type = (response.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
+    if content_type.startswith("text/") or content_type in {"application/json", "application/xml", "application/xhtml+xml"}:
+        response.close()
+        raise HTTPException(415, "Die Adresse liefert kein Bild oder Video.")
+    if not content_type or content_type == "application/octet-stream":
+        content_type = mimetypes.guess_type(urlparse(response.geturl()).path)[0] or "application/octet-stream"
+
+    def chunks():
+        try:
+            while True:
+                block = response.read(64 * 1024)
+                if not block:
+                    break
+                yield block
+        finally:
+            response.close()
+
+    out = {"Cache-Control": "private, max-age=60"}
+    status = getattr(response, "status", 200) or 200
+    if response.headers.get("Content-Range"):
+        out["Content-Range"] = response.headers["Content-Range"]
+        out["Accept-Ranges"] = "bytes"
+    if response.headers.get("Content-Length"):
+        out["Content-Length"] = response.headers["Content-Length"]
+    return StreamingResponse(chunks(), status_code=status if status in {200, 206} else 200, media_type=content_type, headers=out)
 
 
 @app.get("/api/shares")

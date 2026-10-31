@@ -35,6 +35,36 @@ fi
   done
 ) &
 
+python3 - <<'PY'
+import os
+import struct
+from pathlib import Path
+
+home = Path(os.environ.get("HOME") or "/var/lib/hibit-signage")
+root = home / ".local" / "share" / "icons" / "hibit-blank"
+cursors = root / "cursors"
+cursors.mkdir(parents=True, exist_ok=True)
+size = 24
+image_type = 0xFFFD0002
+chunk = struct.pack("<9I", 36, image_type, size, 1, size, size, 0, 0, 0) + (b"\x00" * (size * size * 4))
+blob = struct.pack("<4sIII", b"Xcur", 16, 0x00010000, 1) + struct.pack("<III", image_type, size, 28) + chunk
+(cursors / "left_ptr").write_bytes(blob)
+for name in (
+    "arrow", "default", "hand", "hand1", "hand2", "pointer", "text", "xterm",
+    "crosshair", "watch", "wait", "progress", "help", "move", "copy", "alias",
+    "no-drop", "not-allowed", "grab", "grabbing", "cell", "vertical-text",
+    "context-menu", "all-scroll", "top_left_arrow", "left_ptr_watch", "x-cursor",
+    "right_ptr", "plus",
+):
+    link = cursors / name
+    if link.is_symlink() or link.exists():
+        link.unlink()
+    link.symlink_to("left_ptr")
+(root / "index.theme").write_text("[Icon Theme]\nName=hibit-blank\n", encoding="utf-8")
+PY
+export XCURSOR_THEME=hibit-blank
+export XCURSOR_SIZE=24
+
 exec cage -s -- "$CHROME" \
   --kiosk \
   --start-fullscreen \

@@ -25,6 +25,16 @@ def kind_for_url(url: str) -> str | None:
     return kind_for_name(path)
 
 
+def _scroll_speed(value) -> int:
+    try:
+        speed = int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+    if not 0 <= speed <= 4000:
+        return 0
+    return speed
+
+
 def safe_filename(name: str) -> str:
     base = Path(name or "datei").name.strip() or "datei"
     base = re.sub(r"[\x00-\x1f]", "", base)
@@ -159,6 +169,7 @@ def sanitize_state(data: dict) -> dict:
             "share_path": None,
             "duration_seconds": duration,
             "fit": "contain" if item.get("fit") == "contain" else "cover",
+            "scroll_speed": _scroll_speed(item.get("scroll_speed")),
             "muted": bool(item.get("muted")),
             "enabled": bool(item.get("enabled", True)),
             "sort_order": index,
