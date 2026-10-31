@@ -1,5 +1,6 @@
 const image = document.getElementById("image");
 const video = document.getElementById("video");
+const web = document.getElementById("web");
 const splash = document.getElementById("splash");
 const splashMessage = document.getElementById("splash-message");
 const addresses = document.getElementById("addresses");
@@ -19,6 +20,7 @@ function showSplash(info, message) {
   image.hidden = true;
   video.hidden = true;
   video.pause();
+  hideWeb();
   splash.hidden = false;
   splashMessage.textContent = message || "Keine Inhalte in der Warteschlange";
   const ips = info && info.ips && info.ips.length ? info.ips : [];
@@ -32,12 +34,18 @@ function showSplash(info, message) {
     .join("");
 }
 
+function hideWeb() {
+  web.hidden = true;
+  if (web.getAttribute("src")) web.removeAttribute("src");
+}
+
 function stopMedia() {
   clearTimeout(timer);
   video.pause();
   image.removeAttribute("src");
   video.removeAttribute("src");
   video.load();
+  hideWeb();
 }
 
 function animateProgress(ms) {
@@ -81,6 +89,19 @@ function play() {
   splash.hidden = true;
   playingId = item.id;
   const fit = item.fit === "contain" ? "contain" : "cover";
+  if (item.kind === "web") {
+    image.hidden = true;
+    video.hidden = true;
+    video.pause();
+    web.hidden = false;
+    if (web.getAttribute("src") !== item.src) web.src = item.src;
+    const duration = (item.duration_seconds || 30) * 1000;
+    animateProgress(duration);
+    timer = setTimeout(next, duration);
+    failures = 0;
+    return;
+  }
+  hideWeb();
   if (item.kind === "video") {
     image.hidden = true;
     video.hidden = false;

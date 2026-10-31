@@ -88,9 +88,19 @@ async def _json(request: Request) -> dict:
     return data
 
 
+def _kind_from_request(data: dict, url: str) -> str:
+    raw = data.get("kind")
+    requested = str(raw).strip() if raw else ""
+    if requested == "web":
+        return "web"
+    return requested or kind_for_url(url) or ""
+
+
 def _duration(value, kind: str):
     if value is None or value == "":
-        return None if kind == "video" else 10
+        if kind == "video":
+            return None
+        return 30 if kind == "web" else 10
     try:
         number = int(value)
     except (TypeError, ValueError) as exc:
@@ -574,12 +584,16 @@ async def device_queue_add(device_id: str, request: Request):
         url = str(data.get("url") or "").strip()
         if not url.startswith(("http://", "https://")) or len(url) > 2000:
             raise HTTPException(400, "Die Adresse muss mit http:// oder https:// beginnen.")
-        kind = data.get("kind") or kind_for_url(url)
-        if kind not in {"image", "video"}:
-            raise HTTPException(400, "Bitte den Typ Bild oder Video wählen.")
+        kind = _kind_from_request(data, url)
+        if kind not in {"image", "video", "web"}:
+            raise HTTPException(400, "Bitte den Typ Bild, Video oder Webseite wählen.")
+        if kind == "web":
+            fallback = urlparse(url).netloc or "Webseite"
+        else:
+            fallback = url.rsplit("/", 1)[-1] or "Webinhalt"
         add(
             {
-                "name": (str(data.get("name") or "").strip() or url.rsplit("/", 1)[-1] or "Webinhalt")[:180],
+                "name": (str(data.get("name") or "").strip() or fallback)[:180],
                 "kind": kind,
                 "origin": "url",
                 "url": url,
@@ -879,6 +893,26 @@ async def device_share_browse(device_id: str, share_id: str, request: Request, p
     if result.get("error"):
         raise HTTPException(400, result["error"])
     return result
+
+
+@app.post("/api/devices/{device_id}/power")
+async def device_power(device_id: str, request: Request):
+    _require_device(request.state.user, device_id, adopted=True)
+    data = await _json(request)
+    action = str(data.get("action") or "")
+    if action not in {"reboot", "poweroff"}:
+        raise HTTPException(400, "Unbekannte Aktion.")
+    if action == "poweroff" and data.get("confirm") != "poweroff":
+        raise HTTPException(400, "Herunterfahren braucht eine zweite Bestätigung.")
+    try:
+        result = await hub.request(device_id, {"type": "power", "action": action}, timeout=15)
+    except TimeoutError as exc:
+        raise HTTPException(504, "Das Gerät hat nicht rechtzeitig geantwortet.") from exc
+    except RuntimeError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    if result.get("ok") is False:
+        raise HTTPException(400, result.get("detail") or "Aktion fehlgeschlagen.")
+    return {"ok": True, "message": result.get("detail") or "Aktion gestartet."}
 
 
 @app.post("/api/devices/{device_id}/update")

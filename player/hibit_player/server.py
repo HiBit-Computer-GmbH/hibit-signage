@@ -18,7 +18,7 @@ from urllib.parse import quote, urlparse
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 
-from hibit_player import agent, db, mounts, updater
+from hibit_player import agent, db, mounts, power, updater
 from hibit_player.shell import shells
 from hibit_player.config import data_dir, install_dir, media_dir, port, version
 from hibit_player.network import hostname, local_ips
@@ -90,9 +90,19 @@ async def _json(request: Request) -> dict:
     return data
 
 
+def _kind_from_request(data: dict, url: str) -> str:
+    raw = data.get("kind")
+    requested = str(raw).strip() if raw else ""
+    if requested == "web":
+        return "web"
+    return requested or kind_for_url(url) or ""
+
+
 def _duration(value, kind: str):
     if value is None or value == "":
-        return None if kind == "video" else 10
+        if kind == "video":
+            return None
+        return 30 if kind == "web" else 10
     try:
         number = int(value)
     except (TypeError, ValueError) as exc:
@@ -270,10 +280,14 @@ async def queue_add(request: Request):
         url = str(data.get("url") or "").strip()
         if not url.startswith(("http://", "https://")) or len(url) > 2000:
             raise HTTPException(400, "Die Adresse muss mit http:// oder https:// beginnen.")
-        kind = data.get("kind") or kind_for_url(url)
-        if kind not in {"image", "video"}:
-            raise HTTPException(400, "Bitte den Typ Bild oder Video wählen. Die Adresse hat keine bekannte Endung.")
-        name = str(data.get("name") or "").strip() or url.rsplit("/", 1)[-1][:180] or "Webinhalt"
+        kind = _kind_from_request(data, url)
+        if kind not in {"image", "video", "web"}:
+            raise HTTPException(400, "Bitte den Typ Bild, Video oder Webseite wählen.")
+        if kind == "web":
+            fallback = urlparse(url).netloc or "Webseite"
+        else:
+            fallback = url.rsplit("/", 1)[-1][:180] or "Webinhalt"
+        name = str(data.get("name") or "").strip() or fallback
         item = {
             "name": name[:180],
             "kind": kind,
@@ -600,6 +614,21 @@ def system_update():
 @app.get("/api/system/update-log")
 def system_update_log():
     return {"log": updater.read_log()}
+
+
+@app.post("/api/system/power")
+async def system_power(request: Request):
+    data = await _json(request)
+    action = str(data.get("action") or "")
+    if action not in {"reboot", "poweroff"}:
+        raise HTTPException(400, "Unbekannte Aktion.")
+    if action == "poweroff" and data.get("confirm") != "poweroff":
+        raise HTTPException(400, "Herunterfahren braucht eine zweite Bestätigung.")
+    try:
+        message = power.launch(action)
+    except RuntimeError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"ok": True, "message": message}
 
 
 @app.post("/api/system/restart-display")

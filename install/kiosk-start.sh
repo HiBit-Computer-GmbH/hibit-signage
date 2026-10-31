@@ -3,6 +3,8 @@ set -euo pipefail
 PORT="${HIBIT_PORT:-8080}"
 URL="http://127.0.0.1:${PORT}/player/"
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/hibit}"
+export LANG="${LANG:-de_DE.UTF-8}"
+export LANGUAGE="${LANGUAGE:-de_DE:de}"
 
 until curl -sf --max-time 2 "http://127.0.0.1:${PORT}/api/health" >/dev/null; do
   sleep 1
@@ -39,7 +41,9 @@ exec cage -s -- "$CHROME" \
   --no-first-run \
   --disable-infobars \
   --disable-translate \
-  --disable-features=TranslateUI \
+  --disable-features=Translate,TranslateUI \
+  --lang=de \
+  --accept-lang=de-DE,de \
   --autoplay-policy=no-user-gesture-required \
   --noerrdialogs \
   --disable-session-crashed-bubble \

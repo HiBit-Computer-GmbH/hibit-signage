@@ -13,6 +13,7 @@ const state = {
   shareId: "",
   term: null,
   confirm: "",
+  poweroff: false,
   log: "",
 };
 
@@ -26,6 +27,10 @@ function sizeLabel(bytes) {
   if (value < 1048576) return `${Math.round(value / 1024)} KB`;
   if (value < 1073741824) return `${(value / 1048576).toFixed(1)} MB`;
   return `${(value / 1073741824).toFixed(2)} GB`;
+}
+
+function kindLabel(kind) {
+  return { image: "Bild", video: "Video", web: "Webseite" }[kind] || "Inhalt";
 }
 
 function roleLabel(role) {
@@ -103,8 +108,8 @@ function nav() {
 
 function layout(inner) {
   return `<div class="shell"><aside class="side">${brand()}<nav class="nav">${nav()}</nav>
-    <div class="muted" style="margin-top:auto">${esc(state.user.name)}<br>${esc(roleLabel(state.user.role))}${state.user.tenant_name ? "<br>" + esc(state.user.tenant_name) : ""}</div>
-    <button class="ghost" id="logout" type="button">Abmelden</button></aside><main class="main">${inner}</main></div>`;
+    <div class="side-foot"><div class="muted">${esc(state.user.name)}<br>${esc(roleLabel(state.user.role))}${state.user.tenant_name ? "<br>" + esc(state.user.tenant_name) : ""}</div>
+    <button class="ghost" id="logout" type="button">Abmelden</button></div></aside><main class="main">${inner}</main></div>`;
 }
 
 function loginHtml() {
@@ -161,7 +166,7 @@ function deviceHtml() {
   if (device.status === "pending") {
     return `<div class="page-head"><div><h1>${esc(device.hostname || "Neues Gerät")}</h1><p class="muted">${esc((device.ips || []).join(", "))} · ${statusBadge(device)}</p></div></div>
       <form class="card composer" id="adopt-form">
-        <h2 style="margin:0">Adoptieren</h2>
+        <h2>Adoptieren</h2>
         <p class="muted">Wie bei einer UniFi-Konsole wird das Gerät erst nach dem Adopt verwaltet.</p>
         <label>Name<input name="name" value="${esc(device.hostname || "Signage")}" required></label>
         ${isAdmin() ? `<label>Mandant<select name="tenant_id" required><option value="">Bitte wählen</option>${tenantOptions(device.tenant_id)}</select></label>` : `<p>Mandant: ${esc(device.tenant_name || "")}</p>`}
@@ -170,15 +175,15 @@ function deviceHtml() {
   }
   const tabs = [["queue", "Warteschlange"], ["media", "Medien"], ["shares", "Freigaben"], ["terminal", "Terminal"], ["settings", "Gerät"]];
   return `<div class="page-head"><div><h1>${esc(device.name)}</h1><p class="muted">${esc(device.tenant_name || "")} · ${statusBadge(device)} · Rev. ${device.state_revision}</p></div></div>
-    <div class="tabs">${tabs.map(([id, label]) => `<a class="button ${tab === id ? "" : "ghost"}" href="#/device/${device.id}/${id}">${label}</a>`).join("")}</div>
-    ${tab === "media" ? mediaTab() : tab === "shares" ? sharesTab() : tab === "terminal" ? '<div id="term"></div>' : tab === "settings" ? settingsTab() : queueTab()}`;
+    <div class="tabs">${tabs.map(([id, label]) => `<a class="${tab === id ? "active" : ""}" href="#/device/${device.id}/${id}">${label}</a>`).join("")}</div>
+    ${tab === "media" ? mediaTab() : tab === "shares" ? sharesTab() : tab === "terminal" ? '<section class="term-frame"><div class="term-bar"><span>Shell auf dem Pi</span><span>Strg+C bricht ab</span></div><div id="term"></div></section>' : tab === "settings" ? settingsTab() : queueTab()}`;
 }
 
 function queueTab() {
   const items = (state.playback && state.playback.queue) || [];
-  const rows = items.map((item, index) => `<article class="card item"><div><div class="title">${esc(item.name)}</div><div class="meta"><span class="badge">${item.origin === "url" ? "Web" : item.origin === "share" ? "Freigabe" : "Datei"}</span> ${item.enabled ? "" : '<span class="badge warn">Pausiert</span>'}</div></div>
+  const rows = items.map((item, index) => `<article class="card item"><div><div class="title">${esc(item.name)}</div><div class="meta"><span class="badge">${item.kind === "web" ? "Webseite" : item.origin === "url" ? "Adresse" : item.origin === "share" ? "Freigabe" : "Datei"}</span> <span class="badge">${esc(kindLabel(item.kind))}</span> ${item.enabled ? "" : '<span class="badge warn">Pausiert</span>'}</div></div>
     <div class="row">
-      <input data-duration="${esc(item.id)}" type="number" min="1" placeholder="Ende" value="${item.duration_seconds ?? ""}" style="width:90px">
+      <input data-duration="${esc(item.id)}" type="number" min="1" placeholder="Ende" value="${item.duration_seconds ?? ""}" title="Sekunden">
       <button class="ghost" data-action="up" data-id="${esc(item.id)}" ${index === 0 ? "disabled" : ""}>Hoch</button>
       <button class="ghost" data-action="down" data-id="${esc(item.id)}" ${index === items.length - 1 ? "disabled" : ""}>Runter</button>
       <button class="ghost" data-action="toggle" data-id="${esc(item.id)}">${item.enabled ? "Pause" : "Aktiv"}</button>
@@ -190,6 +195,16 @@ function queueTab() {
       <label>Typ<select name="kind"><option value="">Automatisch</option><option value="image">Bild</option><option value="video">Video</option></select></label>
       <label>Sekunden<input name="duration_seconds" type="number" min="1" value="10"></label>
     </div><button type="submit">Hinzufügen</button></form>
+    <form class="card composer" id="page-form">
+      <h2>Webseite</h2>
+      <p class="muted">Zeigt eine Seite im Vollbild, danach geht die Warteschlange weiter. Seiten, die eine Einbettung verbieten, bleiben leer.</p>
+      <div class="grid-2">
+        <label>Name<input name="name" placeholder="Optional"></label>
+        <label>Adresse<input name="url" type="url" placeholder="https://example.com" required></label>
+        <label>Sekunden<input name="duration_seconds" type="number" min="1" value="60"></label>
+      </div>
+      <button type="submit">Webseite anzeigen</button>
+    </form>
     <div class="list" id="queue-list">${rows || '<div class="card panel muted">Die Warteschlange ist leer. Der Bildschirm zeigt die IP.</div>'}</div>`;
 }
 
@@ -225,7 +240,16 @@ function sharesTab() {
 
 function settingsTab() {
   const device = state.device;
-  return `<form class="card composer" id="rename-form"><label>Name<input name="name" value="${esc(device.name)}" required></label><button type="submit">Speichern</button></form>
+  const power = `<section class="card panel" id="power-panel">
+      <h2>Strom</h2>
+      <p class="muted">Neustart startet den Pi neu. Herunterfahren schaltet ihn aus, bis jemand ihn wieder einschaltet.</p>
+      <div class="row">
+        <button class="ghost" id="reboot" type="button">Neustart</button>
+        <button class="danger" id="poweroff" type="button">Herunterfahren</button>
+      </div>
+      ${state.poweroff ? `<div class="confirm-box"><p>Zweite Bestätigung: der Pi wird jetzt ausgeschaltet.</p><div class="row"><button class="danger" id="poweroff-now" type="button">Wirklich herunterfahren</button><button class="ghost" id="poweroff-cancel" type="button">Abbrechen</button></div></div>` : ""}
+    </section>`;
+  return `${power}<form class="card composer" id="rename-form"><label>Name<input name="name" value="${esc(device.name)}" required></label><button type="submit">Speichern</button></form>
     ${isAdmin() ? `<form class="card composer" id="move-form"><label>Mandant wechseln<select name="tenant_id">${tenantOptions(device.tenant_id)}</select></label><button class="ghost" type="submit">Verschieben</button></form>
     <section class="card panel"><div class="spread"><div><div class="title">Geräte-Update</div><p class="muted">Der Pi zieht das GitHub-Repository und startet neu.</p></div><button id="device-update" type="button">Update</button></div></section>
     <button class="danger" id="forget" type="button">${state.confirm === "forget" ? "Wirklich entfernen" : "Gerät entfernen"}</button>` : `<p class="muted">Updates startet nur ein Cloud-Admin.</p>`}
@@ -273,7 +297,7 @@ function systemHtml() {
     <article class="card stat" style="margin-bottom:14px"><span class="muted">Speicher frei</span><b>${sizeLabel(info.disk_free)}</b></article>
     <section class="card panel"><div class="spread"><div><div class="title">Cloud aus GitHub updaten</div><p class="muted">Nur für Cloud-Admins. Mandanten sehen diesen Schalter nicht.</p></div><button id="cloud-update" type="button">Update</button></div>
     <pre class="log">${esc(state.log || "")}</pre></section>
-    <form class="card composer" id="password-form"><h2 style="margin:0">Eigenes Passwort</h2><div class="grid-2"><label>Aktuell<input name="current" type="password" required></label><label>Neu<input name="next" type="password" minlength="8" required></label></div><button type="submit">Ändern</button></form>`;
+    <form class="card composer" id="password-form"><h2>Eigenes Passwort</h2><div class="grid-2"><label>Aktuell<input name="current" type="password" required></label><label>Neu<input name="next" type="password" minlength="8" required></label></div><button type="submit">Ändern</button></form>`;
 }
 
 function render() {
@@ -288,6 +312,7 @@ function render() {
     return;
   }
   const current = route();
+  if (!(current.name === "device" && current.tab === "settings")) state.poweroff = false;
   const pages = { dashboard: dashboardHtml, devices: devicesHtml, device: deviceHtml, tenants: tenantsHtml, users: usersHtml, keys: keysHtml, system: systemHtml };
   const page = pages[current.name] || dashboardHtml;
   app.innerHTML = layout(page());
@@ -392,6 +417,22 @@ function bindQueue() {
       toast(error.message, true);
     }
   });
+  const pageForm = document.getElementById("page-form");
+  if (pageForm) {
+    pageForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      try {
+        await api(`/api/devices/${deviceId()}/queue`, {
+          method: "POST",
+          body: { origin: "url", name: pageForm.name.value, url: pageForm.url.value, kind: "web", duration_seconds: pageForm.duration_seconds.value },
+        });
+        toast("Webseite in die Warteschlange gelegt");
+        await show();
+      } catch (error) {
+        toast(error.message, true);
+      }
+    });
+  }
   document.getElementById("queue-list").addEventListener("click", async (event) => {
     const button = event.target.closest("button");
     if (!button) return;
@@ -549,6 +590,44 @@ function bindSettings() {
       } catch (error) {
         toast(error.message, true);
       }
+    });
+  }
+  const reboot = document.getElementById("reboot");
+  if (reboot) {
+    reboot.addEventListener("click", async () => {
+      if (!confirm("Den Pi neu starten?")) return;
+      try {
+        const result = await api(`/api/devices/${deviceId()}/power`, { method: "POST", body: { action: "reboot" } });
+        toast(result.message || "Neustart wurde gestartet");
+      } catch (error) {
+        toast(error.message, true);
+      }
+    });
+  }
+  const poweroff = document.getElementById("poweroff");
+  if (poweroff) {
+    poweroff.addEventListener("click", () => {
+      state.poweroff = true;
+      render();
+    });
+  }
+  const poweroffNow = document.getElementById("poweroff-now");
+  if (poweroffNow) {
+    poweroffNow.addEventListener("click", async () => {
+      try {
+        const result = await api(`/api/devices/${deviceId()}/power`, { method: "POST", body: { action: "poweroff", confirm: "poweroff" } });
+        state.poweroff = false;
+        toast(result.message || "Das Gerät fährt herunter");
+      } catch (error) {
+        toast(error.message, true);
+      }
+    });
+  }
+  const poweroffCancel = document.getElementById("poweroff-cancel");
+  if (poweroffCancel) {
+    poweroffCancel.addEventListener("click", () => {
+      state.poweroff = false;
+      render();
     });
   }
   const forget = document.getElementById("forget");

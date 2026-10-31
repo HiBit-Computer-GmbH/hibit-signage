@@ -132,7 +132,9 @@ def sanitize_state(data: dict) -> dict:
             continue
         kind = item.get("kind")
         origin = item.get("origin")
-        if kind not in ("image", "video") or origin not in ("url", "local", "share"):
+        if kind not in ("image", "video", "web") or origin not in ("url", "local", "share"):
+            continue
+        if kind == "web" and origin != "url":
             continue
         duration = item.get("duration_seconds")
         if duration is not None:
@@ -144,6 +146,8 @@ def sanitize_state(data: dict) -> dict:
                 duration = None
         if kind == "image" and duration is None:
             duration = 10
+        if kind == "web" and duration is None:
+            duration = 30
         entry = {
             "id": qid,
             "name": (str(item.get("name") or "Inhalt")[:180] or "Inhalt"),

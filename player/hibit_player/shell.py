@@ -32,10 +32,15 @@ class ShellSession:
         fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
         env = os.environ.copy()
         env["TERM"] = "xterm-256color"
+        env["PS1"] = r"\[\033[92m\]\u@\h\[\033[0m\] \w \[\033[92m\]\$\[\033[0m\] "
+        env["PROMPT_COMMAND"] = ""
         env.setdefault("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
         env.setdefault("LANG", "C.UTF-8")
         self.proc = await asyncio.create_subprocess_exec(
             "/bin/bash",
+            "--noprofile",
+            "--norc",
+            "-i",
             stdin=slave,
             stdout=slave,
             stderr=slave,

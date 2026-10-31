@@ -1,6 +1,7 @@
 * text=auto
 *.sh text eol=lf
 install/hibit-mount text eol=lf
+install/hibit-power text eol=lf
 install/hibit-update-player text eol=lf
 install/hibit-update-cloud text eol=lf
 install/hotkey-listener.py text eol=lf

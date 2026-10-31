@@ -30,12 +30,14 @@ html, body {
   place-items: center;
 }
 
-#image, #video {
+#image, #video, #web {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  border: 0;
   background: #000;
 }
+
+#image, #video { object-fit: cover; }
 
 #splash {
   display: grid;
@@ -49,7 +51,7 @@ html, body {
     linear-gradient(180deg, #171b13 0%, #10130e 100%);
 }
 
-#splash[hidden], #progress[hidden], #image[hidden], #video[hidden] { display: none !important; }
+#splash[hidden], #progress[hidden], #image[hidden], #video[hidden], #web[hidden] { display: none !important; }
 
 .brand {
   display: flex;

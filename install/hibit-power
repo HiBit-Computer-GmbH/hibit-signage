@@ -1,0 +1,11 @@
+#!/bin/bash
+# Wird als root über sudo gestartet. Erlaubt nur Neustart oder Herunterfahren.
+set -euo pipefail
+case "${1:-}" in
+  reboot) exec /usr/bin/systemctl reboot ;;
+  poweroff) exec /usr/bin/systemctl poweroff ;;
+  *)
+    echo "Nur reboot oder poweroff." >&2
+    exit 1
+    ;;
+esac

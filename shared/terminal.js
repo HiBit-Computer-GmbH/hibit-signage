@@ -45,8 +45,9 @@
       this.fg = "";
       this.bg = "";
       this.bold = false;
-      this.esc = false;
+      this.mode = "";
       this.escBuf = "";
+      this.osc = "";
       this.decoder = new TextDecoder("utf-8");
       this.onInput = null;
       this.onResize = null;
@@ -154,28 +155,57 @@
     }
 
     feed(ch) {
-      if (this.esc) {
+      if (this.mode === "osc") {
+        if (ch === "\u0007") {
+          this.mode = "";
+          this.osc = "";
+          return;
+        }
+        if (ch === "\u001b") {
+          this.mode = "osc-st";
+          return;
+        }
+        if (this.osc.length < 512) this.osc += ch;
+        return;
+      }
+      if (this.mode === "osc-st") {
+        this.mode = "";
+        this.osc = "";
+        return;
+      }
+      if (this.mode === "skip") {
+        this.mode = "";
+        return;
+      }
+      if (this.mode === "csi") {
         this.escBuf += ch;
-        if (this.escBuf.length > 32) {
-          this.esc = false;
-          this.escBuf = "";
-          return;
-        }
-        if (this.escBuf.length === 1 && ch !== "[") {
-          this.esc = false;
-          this.escBuf = "";
-          return;
-        }
-        if (/[@A-Za-z]/.test(ch)) {
-          this.csi(this.escBuf);
-          this.esc = false;
+        if (this.escBuf.length > 64 || (ch >= "@" && ch <= "~")) {
+          if (ch >= "@" && ch <= "~") this.csi(this.escBuf);
+          this.mode = "";
           this.escBuf = "";
         }
         return;
       }
+      if (this.mode === "esc") {
+        if (ch === "[") {
+          this.mode = "csi";
+          this.escBuf = "";
+          return;
+        }
+        if (ch === "]") {
+          this.mode = "osc";
+          this.osc = "";
+          return;
+        }
+        if ("()%#".includes(ch)) {
+          this.mode = "skip";
+          return;
+        }
+        this.mode = "";
+        return;
+      }
       if (ch === "\u001b") {
-        this.esc = true;
-        this.escBuf = "";
+        this.mode = "esc";
         return;
       }
       if (ch === "\r") {
@@ -201,7 +231,8 @@
     csi(seq) {
       const final = seq[seq.length - 1];
       const params = seq
-        .slice(1, -1)
+        .slice(0, -1)
+        .replace(/^[?>]/, "")
         .split(";")
         .map((value) => parseInt(value || "0", 10) || 0);
       if (final === "m") this.sgr(params.length ? params : [0]);

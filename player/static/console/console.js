@@ -9,6 +9,7 @@ const state = {
   path: "",
   term: null,
   confirm: "",
+  poweroff: false,
 };
 
 const views = [
@@ -31,9 +32,14 @@ function sizeLabel(bytes) {
   return `${(value / 1073741824).toFixed(2)} GB`;
 }
 
+function kindLabel(kind) {
+  return { image: "Bild", video: "Video", web: "Webseite" }[kind] || "Inhalt";
+}
+
 function originLabel(item) {
-  if (item.origin === "url") return "Web";
-  if (item.origin === "local") return "Lokal";
+  if (item.kind === "web") return "Webseite";
+  if (item.origin === "url") return "Adresse";
+  if (item.origin === "local") return "Datei";
   return "Freigabe";
 }
 
@@ -105,8 +111,10 @@ function layout(inner) {
       <nav class="nav">
         ${views.map(([id, label]) => `<a href="#/${id}" class="${id === current ? "active" : ""}">${label}</a>`).join("")}
       </nav>
-      <div class="muted" style="margin-top:auto">Angemeldet als ${esc(state.user.username)}</div>
-      <button class="ghost" id="logout" type="button">Abmelden</button>
+      <div class="side-foot">
+        <div class="muted">Angemeldet als ${esc(state.user.username)}</div>
+        <button class="ghost" id="logout" type="button">Abmelden</button>
+      </div>
     </aside>
     <main class="main">${inner}</main>
   </div>`;
@@ -129,10 +137,10 @@ function queueHtml() {
       <span class="handle" title="Ziehen">⋮⋮</span>
       <div>
         <div class="title">${esc(item.name)}</div>
-        <div class="meta"><span class="badge">${esc(originLabel(item))}</span> <span class="badge">${item.kind === "video" ? "Video" : "Bild"}</span> ${item.enabled ? "" : '<span class="badge warn">Pausiert</span>'}</div>
+        <div class="meta"><span class="badge">${esc(originLabel(item))}</span> <span class="badge">${esc(kindLabel(item.kind))}</span> ${item.enabled ? "" : '<span class="badge warn">Pausiert</span>'}</div>
       </div>
       <div class="row">
-        <input data-field="duration" data-id="${esc(item.id)}" type="number" min="1" max="86400" placeholder="Ende" value="${item.duration_seconds ?? ""}" style="width:96px" title="Sekunden, bei Videos leer = bis zum Ende">
+        <input data-field="duration" data-id="${esc(item.id)}" type="number" min="1" max="86400" placeholder="Ende" value="${item.duration_seconds ?? ""}" title="Sekunden, bei Videos leer = bis zum Ende">
         <button class="ghost" data-action="up" data-id="${esc(item.id)}" ${index === 0 ? "disabled" : ""}>Hoch</button>
         <button class="ghost" data-action="down" data-id="${esc(item.id)}" ${index === state.queue.length - 1 ? "disabled" : ""}>Runter</button>
         <button class="ghost" data-action="toggle" data-id="${esc(item.id)}">${item.enabled ? "Pause" : "Aktiv"}</button>
@@ -148,6 +156,16 @@ function queueHtml() {
         <label>Sekunden<input name="duration_seconds" type="number" min="1" value="10"></label>
       </div>
       <div class="row"><button type="submit">Zur Warteschlange</button><span class="muted">Bilder und Videos direkt aus dem Web.</span></div>
+    </form>
+    <form class="card composer" id="page-form">
+      <h2>Webseite</h2>
+      <p class="muted">Zeigt eine Seite im Vollbild, danach geht die Warteschlange weiter. Seiten, die eine Einbettung verbieten, bleiben leer.</p>
+      <div class="grid-2">
+        <label>Name<input name="name" placeholder="Optional"></label>
+        <label>Adresse<input name="url" type="url" placeholder="https://example.com" required></label>
+        <label>Sekunden<input name="duration_seconds" type="number" min="1" value="60"></label>
+      </div>
+      <button type="submit">Webseite anzeigen</button>
     </form>
     <div class="list" id="queue-list">${rows || '<div class="card panel muted">Noch keine Inhalte. Die Anzeige zeigt dann die IP der Webkonsole.</div>'}</div>`;
 }
@@ -206,7 +224,7 @@ function sharesHtml() {
     </form>
     <div class="list">${rows || '<div class="card panel muted">Noch keine Freigabe.</div>'}</div>
     ${state.shareId ? `<section class="card panel">
-      <div class="spread"><h2 style="margin:0">Inhalt</h2><div class="row"><button class="ghost" id="browse-up" type="button">Nach oben</button><span class="muted">${esc(state.path || "/")}</span></div></div>
+      <div class="spread"><h2>Inhalt</h2><div class="row"><button class="ghost" id="browse-up" type="button">Nach oben</button><span class="muted">${esc(state.path || "/")}</span></div></div>
       <table><thead><tr><th>Typ</th><th>Name</th><th>Größe</th><th></th></tr></thead><tbody>${listing || '<tr><td colspan="4" class="muted">Leer</td></tr>'}</tbody></table>
     </section>` : ""}`;
 }
@@ -222,23 +240,32 @@ function systemHtml() {
       <article class="card stat"><span class="muted">Speicher frei</span><b>${sizeLabel(info.disk_free)}</b><span class="meta">von ${sizeLabel(info.disk_total)}</span></article>
     </div>
     <form class="card composer" id="cloud-form">
-      <h2 style="margin:0">Cloud</h2>
+      <h2>Cloud</h2>
       <label>Adresse<input name="url" value="${esc(cloud.url || "")}" placeholder="https://signage.example.com"></label>
       <label>Geräte-Schlüssel<input name="device_key" value="${esc(cloud.device_key || "")}" placeholder="HB-XXXX-XXXX-XXXX-XXXX"></label>
       <p class="muted">Leer lassen trennt die Cloud. Nach dem Speichern meldet sich das Gerät und wartet auf den Adopt.</p>
       <button type="submit">Cloud speichern</button>
     </form>
     <form class="card composer" id="password-form">
-      <h2 style="margin:0">Passwort</h2>
+      <h2>Passwort</h2>
       <div class="grid-2">
         <label>Aktuell<input name="current" type="password" required></label>
         <label>Neu<input name="next" type="password" minlength="8" required></label>
       </div>
       <button type="submit">Passwort ändern</button>
     </form>
+    <section class="card panel" id="power-panel">
+      <h2>Strom</h2>
+      <p class="muted">Neustart startet den Pi neu. Herunterfahren schaltet ihn aus, bis jemand ihn wieder einschaltet.</p>
+      <div class="row">
+        <button class="ghost" id="reboot" type="button">Neustart</button>
+        <button class="danger" id="poweroff" type="button">Herunterfahren</button>
+      </div>
+      ${state.poweroff ? `<div class="confirm-box"><p>Zweite Bestätigung: der Pi wird jetzt ausgeschaltet.</p><div class="row"><button class="danger" id="poweroff-now" type="button">Wirklich herunterfahren</button><button class="ghost" id="poweroff-cancel" type="button">Abbrechen</button></div></div>` : ""}
+    </section>
     <section class="card panel">
       <div class="spread"><div><div class="title">Update aus GitHub</div><p class="muted">Zieht den aktuellen Stand und startet den Player neu.</p></div><button id="update" type="button">Update</button></div>
-      <div class="row" style="margin-top:12px"><button class="ghost" id="restart-display" type="button">Anzeige neu starten</button></div>
+      <div class="row actions-gap"><button class="ghost" id="restart-display" type="button">Anzeige neu starten</button></div>
       <pre class="log" id="update-log">${esc(state.log || "")}</pre>
     </section>`;
 }
@@ -255,7 +282,8 @@ function render() {
     return;
   }
   const current = viewName();
-  const pages = { queue: queueHtml, media: mediaHtml, shares: sharesHtml, terminal: () => `<div class="page-head"><div><h1>Terminal</h1><p class="muted">Shell auf diesem Gerät. Es ist nur eine Sitzung gleichzeitig möglich.</p></div></div><div id="term"></div>`, system: systemHtml };
+  if (current !== "system") state.poweroff = false;
+  const pages = { queue: queueHtml, media: mediaHtml, shares: sharesHtml, terminal: () => `<div class="page-head"><div><h1>Terminal</h1><p class="muted">Shell auf diesem Gerät. Es ist nur eine Sitzung gleichzeitig möglich.</p></div></div><section class="term-frame"><div class="term-bar"><span>Shell</span><span>Strg+C bricht ab</span></div><div id="term"></div></section>`, system: systemHtml };
   app.innerHTML = layout(pages[current]());
   document.getElementById("logout").addEventListener("click", async () => {
     await api("/api/logout", { method: "POST", body: {} });
@@ -316,6 +344,27 @@ function bindQueue() {
         },
       });
       form.reset();
+      await show();
+    } catch (error) {
+      toast(error.message, true);
+    }
+  });
+  document.getElementById("page-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    try {
+      await api("/api/queue", {
+        method: "POST",
+        body: {
+          origin: "url",
+          name: form.name.value,
+          url: form.url.value,
+          kind: "web",
+          duration_seconds: form.duration_seconds.value,
+        },
+      });
+      form.reset();
+      toast("Webseite in die Warteschlange gelegt");
       await show();
     } catch (error) {
       toast(error.message, true);
@@ -532,6 +581,37 @@ function bindSystem() {
       toast(error.message, true);
     }
   });
+  document.getElementById("reboot").addEventListener("click", async () => {
+    if (!confirm("Den Pi neu starten?")) return;
+    try {
+      const result = await api("/api/system/power", { method: "POST", body: { action: "reboot" } });
+      toast(result.message || "Neustart wurde gestartet");
+    } catch (error) {
+      toast(error.message, true);
+    }
+  });
+  document.getElementById("poweroff").addEventListener("click", () => {
+    state.poweroff = true;
+    render();
+  });
+  const poweroffNow = document.getElementById("poweroff-now");
+  if (poweroffNow) {
+    poweroffNow.addEventListener("click", async () => {
+      try {
+        const result = await api("/api/system/power", { method: "POST", body: { action: "poweroff", confirm: "poweroff" } });
+        toast(result.message || "Das Gerät fährt herunter");
+      } catch (error) {
+        toast(error.message, true);
+      }
+    });
+  }
+  const poweroffCancel = document.getElementById("poweroff-cancel");
+  if (poweroffCancel) {
+    poweroffCancel.addEventListener("click", () => {
+      state.poweroff = false;
+      render();
+    });
+  }
 }
 
 async function pollLog() {

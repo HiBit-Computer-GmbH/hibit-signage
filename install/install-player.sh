@@ -50,10 +50,16 @@ if ! apt-get install -y chromium; then
   apt-get install -y chromium-browser
 fi
 
+CREATED_HIBIT=0
 if ! id hibit >/dev/null 2>&1; then
   useradd --system --create-home --home-dir "$DATA_DIR" --shell /bin/bash hibit
+  CREATED_HIBIT=1
+  passwd -l hibit >/dev/null 2>&1 || true
+elif passwd -S hibit 2>/dev/null | grep -q ' L '; then
+  # Ein bestehendes Konto, zum Beispiel aus dem Raspberry Pi Imager, wurde früher
+  # mit passwd -l gesperrt. Die Sperre nur aufheben, das Passwort bleibt das alte.
+  passwd -u hibit >/dev/null 2>&1 || true
 fi
-passwd -l hibit >/dev/null 2>&1 || true
 for group in video render input tty; do
   if getent group "$group" >/dev/null; then
     usermod -aG "$group" hibit || true
@@ -82,11 +88,18 @@ chmod 750 "$DATA_DIR"
 
 install -m 755 "$TARGET/install/hibit-mount" /usr/local/sbin/hibit-mount
 install -m 755 "$TARGET/install/hibit-update-player" /usr/local/sbin/hibit-update-player
+install -m 755 "$TARGET/install/hibit-power" /usr/local/sbin/hibit-power
 SYSTEMCTL="$(command -v systemctl)"
 cat >/etc/sudoers.d/hibit-signage <<EOF
-hibit ALL=(root) NOPASSWD: /usr/local/sbin/hibit-mount, /usr/local/sbin/hibit-update-player, ${SYSTEMCTL} restart hibit-kiosk
+hibit ALL=(root) NOPASSWD: /usr/local/sbin/hibit-mount, /usr/local/sbin/hibit-update-player, /usr/local/sbin/hibit-power, ${SYSTEMCTL} restart hibit-kiosk
 EOF
 chmod 440 /etc/sudoers.d/hibit-signage
+
+for policy_dir in /etc/chromium/policies/managed /etc/chromium-browser/policies/managed; do
+  mkdir -p "$policy_dir"
+  printf '%s\n' '{"TranslateEnabled":false}' > "$policy_dir/hibit-signage.json"
+  chmod 644 "$policy_dir/hibit-signage.json"
+done
 
 if [[ -z "$ADMIN_PASSWORD" ]]; then
   ADMIN_PASSWORD="$(python3 -c 'import secrets; print(secrets.token_urlsafe(12))')"

@@ -10,7 +10,7 @@ import urllib.error
 import urllib.request
 import uuid
 
-from hibit_player import db, mounts, updater
+from hibit_player import db, mounts, power, updater
 from hibit_player.shell import shells
 from hibit_player.config import media_dir, version
 from hibit_player.network import hostname, local_ips
@@ -168,6 +168,12 @@ class CloudAgent:
                     await ws.send(json.dumps({"type": "update_started", "req": msg.get("req"), "detail": message}))
                 except Exception as exc:
                     await ws.send(json.dumps({"type": "update_started", "req": msg.get("req"), "detail": str(exc), "ok": False}))
+            elif kind == "power":
+                try:
+                    message = power.launch(str(msg.get("action") or ""))
+                    await ws.send(json.dumps({"type": "power_done", "req": msg.get("req"), "detail": message, "ok": True}))
+                except Exception as exc:
+                    await ws.send(json.dumps({"type": "power_done", "req": msg.get("req"), "detail": str(exc), "ok": False}))
 
     def _apply_welcome(self, msg: dict) -> None:
         status = msg.get("status") or "pending"
