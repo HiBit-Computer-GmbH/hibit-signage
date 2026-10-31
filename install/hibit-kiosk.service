@@ -1,0 +1,28 @@
+[Unit]
+Description=HiBit Signage Anzeige
+After=hibit-signage.service systemd-user-sessions.service
+Wants=hibit-signage.service
+Conflicts=getty@tty1.service
+
+[Service]
+User=hibit
+Group=hibit
+SupplementaryGroups=video render input
+EnvironmentFile=/etc/hibit/player.env
+Environment=XDG_RUNTIME_DIR=/run/hibit
+ExecStartPre=+/bin/mkdir -p /run/hibit
+ExecStartPre=+/bin/chown hibit:hibit /run/hibit
+ExecStartPre=+/bin/chmod 700 /run/hibit
+ExecStart=/opt/hibit-signage/install/kiosk-start.sh
+Restart=always
+RestartSec=2
+TTYPath=/dev/tty1
+StandardInput=tty
+StandardOutput=journal
+StandardError=journal
+TTYReset=yes
+TTYVHangup=yes
+PAMName=login
+
+[Install]
+WantedBy=multi-user.target

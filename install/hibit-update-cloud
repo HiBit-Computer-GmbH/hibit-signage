@@ -1,0 +1,15 @@
+#!/bin/bash
+set -euo pipefail
+INSTALL="${HIBIT_INSTALL_DIR:-/opt/hibit-signage}"
+LOG="${HIBIT_DATA_DIR:-/var/lib/hibit-cloud}/update.log"
+mkdir -p "$(dirname "$LOG")"
+exec >>"$LOG" 2>&1
+echo "=== $(date -Is) Cloud-Update ==="
+sleep 1
+cd "$INSTALL"
+export GIT_TERMINAL_PROMPT=0
+git -c safe.directory="$INSTALL" fetch origin
+git -c safe.directory="$INSTALL" pull --ff-only
+"$INSTALL/.venv/bin/pip" install -r "$INSTALL/cloud/requirements.txt"
+systemctl restart hibit-cloud
+echo "=== Cloud-Update fertig ==="

@@ -1,0 +1,12 @@
+[Unit]
+Description=HiBit Signage Tastenkürzel für die Shell
+After=multi-user.target
+
+[Service]
+Type=simple
+ExecStart=/opt/hibit-signage/.venv/bin/python /opt/hibit-signage/install/hotkey-listener.py
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

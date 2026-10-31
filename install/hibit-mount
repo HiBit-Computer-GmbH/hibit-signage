@@ -1,0 +1,50 @@
+#!/bin/bash
+# Root-Helfer. Der Dienst darf nur Einhängepunkte unter /mnt/hibit verwenden.
+set -euo pipefail
+
+case "${1:-}" in
+  umount)
+    MP="$(realpath -m "${2:-}")"
+    case "$MP" in
+      /mnt/hibit/*) ;;
+      *) echo "Ungültiger Einhängepunkt" >&2; exit 2 ;;
+    esac
+    umount "$MP"
+    ;;
+  mount)
+    PROTO="${2:-}"
+    SERVER="${3:-}"
+    EXPORT="${4:-}"
+    MP="$(realpath -m "${5:-}")"
+    CREDS="${6:-}"
+    UID_="${7:-}"
+    GID_="${8:-}"
+    case "$MP" in
+      /mnt/hibit/*) ;;
+      *) echo "Ungültiger Einhängepunkt" >&2; exit 2 ;;
+    esac
+    [[ "$SERVER" =~ ^[A-Za-z0-9._:\[\]-]+$ ]] || { echo "Ungültiger Server" >&2; exit 2; }
+    [[ "$EXPORT" =~ ^[A-Za-z0-9._@/+:-]+$ ]] || { echo "Ungültige Freigabe" >&2; exit 2; }
+    [[ "$UID_" =~ ^[0-9]+$ && "$GID_" =~ ^[0-9]+$ ]] || exit 2
+    mkdir -p "$MP"
+    if [[ "$PROTO" == "smb" ]]; then
+      case "$CREDS" in
+        /var/lib/hibit-signage/credentials/*) ;;
+        *) echo "Ungültige Zugangsdaten" >&2; exit 2 ;;
+      esac
+      [[ "$EXPORT" != */* ]] || { echo "SMB-Freigabename ungültig" >&2; exit 2; }
+      mount -t cifs "//${SERVER}/${EXPORT}" "$MP" -o "credentials=${CREDS},ro,uid=${UID_},gid=${GID_},file_mode=0444,dir_mode=0555,iocharset=utf8,noperm,noserverino"
+    elif [[ "$PROTO" == "nfs" ]]; then
+      if ! mount -t nfs "${SERVER}:/${EXPORT}" "$MP" -o "ro,soft,timeo=30,retrans=2,vers=4.1"; then
+        mount -t nfs "${SERVER}:/${EXPORT}" "$MP" -o "ro,soft,timeo=30,retrans=2,vers=3"
+      fi
+    else
+      echo "Unbekanntes Protokoll" >&2
+      exit 2
+    fi
+    ;;
+  *)
+    echo "Verwendung: hibit-mount mount|umount ..." >&2
+    exit 2
+    ;;
+esac

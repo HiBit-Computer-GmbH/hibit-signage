@@ -1,0 +1,17 @@
+[Unit]
+Description=HiBit Signage Player
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=hibit
+Group=hibit
+WorkingDirectory=/opt/hibit-signage/player
+EnvironmentFile=/etc/hibit/player.env
+ExecStart=/opt/hibit-signage/.venv/bin/python -m hibit_player
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

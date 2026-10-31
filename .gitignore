@@ -1,0 +1,16 @@
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+data/
+*.db
+*.db-wal
+*.db-shm
+initial-password.txt
+update.log
+.hibit-signage/
+*.log
+.DS_Store
+Thumbs.db

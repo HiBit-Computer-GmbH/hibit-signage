@@ -1,0 +1,16 @@
+[Unit]
+Description=HiBit Signage Cloud
+After=network.target
+
+[Service]
+Type=simple
+User=hibit
+Group=hibit
+WorkingDirectory=/opt/hibit-signage/cloud
+EnvironmentFile=/etc/hibit/cloud.env
+ExecStart=/opt/hibit-signage/.venv/bin/python -m hibit_cloud
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

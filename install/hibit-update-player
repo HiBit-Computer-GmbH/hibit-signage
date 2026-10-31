@@ -1,0 +1,17 @@
+#!/bin/bash
+# Wird als root über sudo gestartet. Zieht nur per fast-forward und startet danach neu.
+set -euo pipefail
+INSTALL="${HIBIT_INSTALL_DIR:-/opt/hibit-signage}"
+LOG="${HIBIT_DATA_DIR:-/var/lib/hibit-signage}/update.log"
+mkdir -p "$(dirname "$LOG")"
+exec >>"$LOG" 2>&1
+echo "=== $(date -Is) Player-Update ==="
+sleep 1
+cd "$INSTALL"
+export GIT_TERMINAL_PROMPT=0
+git -c safe.directory="$INSTALL" fetch origin
+git -c safe.directory="$INSTALL" pull --ff-only
+"$INSTALL/.venv/bin/pip" install -r "$INSTALL/player/requirements.txt"
+systemctl restart hibit-signage
+systemctl try-restart hibit-kiosk || true
+echo "=== Player-Update fertig ==="
