@@ -98,6 +98,13 @@ def _kind_from_request(data: dict, url: str) -> str:
     return requested or kind_for_url(url) or ""
 
 
+def _fit(data: dict, kind: str) -> str:
+    value = str(data.get("fit") or "")
+    if value in {"contain", "cover"}:
+        return value
+    return "contain" if kind == "image" else "cover"
+
+
 def _duration(value, kind: str):
     if value is None or value == "":
         if kind == "video":
@@ -294,7 +301,7 @@ async def queue_add(request: Request):
             "origin": "url",
             "url": url,
             "duration_seconds": _duration(data.get("duration_seconds"), kind),
-            "fit": "contain" if data.get("fit") == "contain" else "cover",
+            "fit": _fit(data, kind),
             "muted": bool(data.get("muted")),
         }
     elif origin == "local":
@@ -307,7 +314,7 @@ async def queue_add(request: Request):
             "origin": "local",
             "file_id": media["id"],
             "duration_seconds": _duration(data.get("duration_seconds"), media["kind"]),
-            "fit": "contain" if data.get("fit") == "contain" else "cover",
+            "fit": _fit(data, media["kind"]),
             "muted": bool(data.get("muted")),
         }
     elif origin == "share":
@@ -328,7 +335,7 @@ async def queue_add(request: Request):
             "share_id": share["id"],
             "share_path": relative,
             "duration_seconds": _duration(data.get("duration_seconds"), kind),
-            "fit": "contain" if data.get("fit") == "contain" else "cover",
+            "fit": _fit(data, kind),
             "muted": bool(data.get("muted")),
         }
     else:

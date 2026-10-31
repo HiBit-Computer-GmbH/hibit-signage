@@ -14,6 +14,7 @@ const state = {
   term: null,
   confirm: "",
   poweroff: false,
+  addMode: "image-url",
   log: "",
 };
 
@@ -179,31 +180,62 @@ function deviceHtml() {
     ${tab === "media" ? mediaTab() : tab === "shares" ? sharesTab() : tab === "terminal" ? '<section class="term-frame"><div class="term-bar"><span>Shell auf dem Pi</span><span>Strg+C bricht ab</span></div><div id="term"></div></section>' : tab === "settings" ? settingsTab() : queueTab()}`;
 }
 
+function fitSelect(item) {
+  if (item.kind === "web") return "";
+  const contain = item.fit !== "cover";
+  return `<select data-field="fit" data-id="${esc(item.id)}" title="Darstellung">
+    <option value="contain" ${contain ? "selected" : ""}>An Auflösung anpassen</option>
+    <option value="cover" ${contain ? "" : "selected"}>Ausfüllen</option>
+  </select>`;
+}
+
+function enqueueFields(files) {
+  const mode = state.addMode || "image-url";
+  if (mode === "local") {
+    const options = files.map((file) => `<option value="${esc(file.id)}">${esc(file.name)}</option>`).join("");
+    if (!options) return `<p class="muted">Noch keine Datei. Zuerst unter <a href="#/device/${deviceId()}/media">Medien</a> hochladen.</p>`;
+    return `<div class="grid-2">
+      <label>Datei<select name="file_id" required>${options}</select></label>
+      <label>Sekunden<input name="duration_seconds" type="number" min="1" value="10"></label>
+    </div>
+    <label class="check"><input type="checkbox" name="fit_screen" checked> An Auflösung anpassen</label>`;
+  }
+  if (mode === "web") {
+    return `<div class="grid-2">
+      <label>Name<input name="name" placeholder="Optional"></label>
+      <label>Adresse<input name="url" type="url" placeholder="https://example.com" required></label>
+      <label>Sekunden<input name="duration_seconds" type="number" min="1" value="60" required></label>
+    </div>
+    <p class="muted">Seiten, die eine Einbettung verbieten, bleiben leer.</p>`;
+  }
+  const image = mode === "image-url";
+  return `<div class="grid-2">
+    <label>Name<input name="name" placeholder="Optional"></label>
+    <label>Adresse<input name="url" type="url" placeholder="${image ? "https://…/bild.jpg" : "https://…/clip.mp4"}" required></label>
+    <label>Sekunden<input name="duration_seconds" type="number" min="1" value="${image ? "10" : ""}" placeholder="${image ? "" : "bis zum Ende"}"></label>
+  </div>
+  <label class="check"><input type="checkbox" name="fit_screen" ${image ? "checked" : ""}> An Auflösung anpassen</label>
+  <p class="muted">Das ganze Bild bleibt sichtbar. Ohne Haken füllt es den Bildschirm und wird beschnitten.</p>`;
+}
+
 function queueTab() {
   const items = (state.playback && state.playback.queue) || [];
-  const rows = items.map((item, index) => `<article class="card item"><div><div class="title">${esc(item.name)}</div><div class="meta"><span class="badge">${item.kind === "web" ? "Webseite" : item.origin === "url" ? "Adresse" : item.origin === "share" ? "Freigabe" : "Datei"}</span> <span class="badge">${esc(kindLabel(item.kind))}</span> ${item.enabled ? "" : '<span class="badge warn">Pausiert</span>'}</div></div>
+  const files = (state.playback && state.playback.files) || [];
+  const mode = state.addMode || "image-url";
+  const modes = [["image-url", "Bild-Adresse"], ["video-url", "Video-Adresse"], ["web", "Webseite"], ["local", "Lokale Datei"]];
+  const rows = items.map((item, index) => `<article class="card item"><div><div class="title">${esc(item.name)}</div><div class="meta"><span class="badge">${item.kind === "web" ? "Webseite" : item.origin === "url" ? "Adresse" : item.origin === "share" ? "Freigabe" : "Datei"}</span> <span class="badge">${esc(kindLabel(item.kind))}</span> ${item.kind === "web" ? "" : `<span class="badge">${item.fit === "cover" ? "Beschnitten" : "Ganzes Bild"}</span>`} ${item.enabled ? "" : '<span class="badge warn">Pausiert</span>'}</div></div>
     <div class="row">
+      ${fitSelect(item)}
       <input data-duration="${esc(item.id)}" type="number" min="1" placeholder="Ende" value="${item.duration_seconds ?? ""}" title="Sekunden">
       <button class="ghost" data-action="up" data-id="${esc(item.id)}" ${index === 0 ? "disabled" : ""}>Hoch</button>
       <button class="ghost" data-action="down" data-id="${esc(item.id)}" ${index === items.length - 1 ? "disabled" : ""}>Runter</button>
       <button class="ghost" data-action="toggle" data-id="${esc(item.id)}">${item.enabled ? "Pause" : "Aktiv"}</button>
       <button class="danger" data-action="delete" data-id="${esc(item.id)}">Löschen</button>
     </div></article>`).join("");
-  return `<form class="card composer" id="url-form"><div class="grid-2">
-      <label>Name<input name="name"></label>
-      <label>Web-Adresse<input name="url" placeholder="https://…/bild.jpg" required></label>
-      <label>Typ<select name="kind"><option value="">Automatisch</option><option value="image">Bild</option><option value="video">Video</option></select></label>
-      <label>Sekunden<input name="duration_seconds" type="number" min="1" value="10"></label>
-    </div><button type="submit">Hinzufügen</button></form>
-    <form class="card composer" id="page-form">
-      <h2>Webseite</h2>
-      <p class="muted">Zeigt eine Seite im Vollbild, danach geht die Warteschlange weiter. Seiten, die eine Einbettung verbieten, bleiben leer.</p>
-      <div class="grid-2">
-        <label>Name<input name="name" placeholder="Optional"></label>
-        <label>Adresse<input name="url" type="url" placeholder="https://example.com" required></label>
-        <label>Sekunden<input name="duration_seconds" type="number" min="1" value="60"></label>
-      </div>
-      <button type="submit">Webseite anzeigen</button>
+  return `<form class="card composer" id="enqueue-form">
+      <div class="mode-menu">${modes.map(([id, label]) => `<button type="button" data-mode="${id}" class="${mode === id ? "active" : ""}">${label}</button>`).join("")}</div>
+      ${enqueueFields(files)}
+      ${mode === "local" && !files.length ? "" : `<button type="submit">In die Warteschlange</button>`}
     </form>
     <div class="list" id="queue-list">${rows || '<div class="card panel muted">Die Warteschlange ist leer. Der Bildschirm zeigt die IP.</div>'}</div>`;
 }
@@ -211,8 +243,8 @@ function queueTab() {
 function mediaTab() {
   const files = (state.playback && state.playback.files) || [];
   const rows = files.map((file) => `<article class="card item"><div><div class="title">${esc(file.name)}</div><div class="meta">${file.kind === "video" ? "Video" : "Bild"} · ${sizeLabel(file.size)} · ${file.location === "cloud" ? "Cloud" : "auf dem Gerät"}</div></div>
-    <div class="row">${file.location === "cloud" ? `<a class="button ghost" href="/api/devices/${state.device.id}/files/${file.id}/raw" target="_blank">Ansehen</a>` : ""}<button data-action="enqueue" data-id="${esc(file.id)}">Abspielen</button><button class="danger" data-action="delete-file" data-id="${esc(file.id)}">Löschen</button></div></article>`).join("");
-  return `<form class="card composer" id="upload-form"><label>Datei für dieses Gerät<input type="file" name="file" required></label><button type="submit">Hochladen</button><p class="muted">Der Pi lädt die Datei selbst herunter, sobald er verbunden ist.</p></form><div class="list">${rows || '<div class="card panel muted">Keine Dateien.</div>'}</div>`;
+    <div class="row">${file.location === "cloud" ? `<a class="button ghost" href="/api/devices/${state.device.id}/files/${file.id}/raw" target="_blank">Ansehen</a>` : ""}<button class="danger" data-action="delete-file" data-id="${esc(file.id)}">Löschen</button></div></article>`).join("");
+  return `<form class="card composer" id="upload-form"><label>Datei für dieses Gerät<input type="file" name="file" required></label><button type="submit">Hochladen</button><p class="muted">Der Pi lädt die Datei selbst. Einreihen geht in der Warteschlange unter Lokale Datei.</p></form><div class="list">${rows || '<div class="card panel muted">Keine Dateien.</div>'}</div>`;
 }
 
 function sharesTab() {
@@ -406,33 +438,41 @@ function bind(current) {
 }
 
 function bindQueue() {
-  const form = document.getElementById("url-form");
+  const form = document.getElementById("enqueue-form");
   if (!form) return;
+  form.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-mode]");
+    if (!button) return;
+    state.addMode = button.dataset.mode;
+    render();
+  });
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
+    const mode = state.addMode || "image-url";
+    const fit = form.fit_screen && form.fit_screen.checked ? "contain" : "cover";
+    let body;
+    if (mode === "local") {
+      body = { origin: "local", file_id: form.file_id.value, duration_seconds: form.duration_seconds.value, fit };
+    } else if (mode === "web") {
+      body = { origin: "url", kind: "web", name: form.name.value, url: form.url.value, duration_seconds: form.duration_seconds.value };
+    } else {
+      body = {
+        origin: "url",
+        kind: mode === "video-url" ? "video" : "image",
+        name: form.name.value,
+        url: form.url.value,
+        duration_seconds: form.duration_seconds.value,
+        fit,
+      };
+    }
     try {
-      await api(`/api/devices/${deviceId()}/queue`, { method: "POST", body: { origin: "url", name: form.name.value, url: form.url.value, kind: form.kind.value || null, duration_seconds: form.duration_seconds.value } });
+      await api(`/api/devices/${deviceId()}/queue`, { method: "POST", body });
+      toast("In die Warteschlange gelegt");
       await show();
     } catch (error) {
       toast(error.message, true);
     }
   });
-  const pageForm = document.getElementById("page-form");
-  if (pageForm) {
-    pageForm.addEventListener("submit", async (event) => {
-      event.preventDefault();
-      try {
-        await api(`/api/devices/${deviceId()}/queue`, {
-          method: "POST",
-          body: { origin: "url", name: pageForm.name.value, url: pageForm.url.value, kind: "web", duration_seconds: pageForm.duration_seconds.value },
-        });
-        toast("Webseite in die Warteschlange gelegt");
-        await show();
-      } catch (error) {
-        toast(error.message, true);
-      }
-    });
-  }
   document.getElementById("queue-list").addEventListener("click", async (event) => {
     const button = event.target.closest("button");
     if (!button) return;
@@ -458,10 +498,17 @@ function bindQueue() {
   });
   document.getElementById("queue-list").addEventListener("change", async (event) => {
     const input = event.target.closest("[data-duration]");
-    if (!input) return;
+    const fit = event.target.closest("[data-field='fit']");
     try {
-      await api(`/api/devices/${deviceId()}/queue/${input.dataset.duration}`, { method: "PATCH", body: { duration_seconds: input.value } });
-      toast("Dauer gespeichert");
+      if (input) {
+        await api(`/api/devices/${deviceId()}/queue/${input.dataset.duration}`, { method: "PATCH", body: { duration_seconds: input.value } });
+        toast("Dauer gespeichert");
+      }
+      if (fit) {
+        await api(`/api/devices/${deviceId()}/queue/${fit.dataset.id}`, { method: "PATCH", body: { fit: fit.value } });
+        toast(fit.value === "contain" ? "Bild wird vollständig gezeigt" : "Bild füllt den Bildschirm");
+        await show();
+      }
     } catch (error) {
       toast(error.message, true);
     }
@@ -488,7 +535,6 @@ function bindMedia() {
     const button = event.target.closest("button");
     if (!button) return;
     try {
-      if (button.dataset.action === "enqueue") await api(`/api/devices/${deviceId()}/queue`, { method: "POST", body: { origin: "local", file_id: button.dataset.id, duration_seconds: 10 } });
       if (button.dataset.action === "delete-file") await api(`/api/devices/${deviceId()}/files/${button.dataset.id}`, { method: "DELETE" });
       await show();
     } catch (error) {
@@ -547,7 +593,7 @@ function bindShares() {
         render();
       }
       if (button.dataset.action === "enqueue-share") {
-        await api(`/api/devices/${deviceId()}/queue`, { method: "POST", body: { origin: "share", share_id: state.shareId, share_path: button.dataset.path, kind: button.dataset.kind, duration_seconds: button.dataset.kind === "image" ? 10 : "" } });
+        await api(`/api/devices/${deviceId()}/queue`, { method: "POST", body: { origin: "share", share_id: state.shareId, share_path: button.dataset.path, kind: button.dataset.kind, duration_seconds: button.dataset.kind === "image" ? 10 : "", fit: button.dataset.kind === "image" ? "contain" : "cover" } });
         toast("Zur Warteschlange hinzugefügt");
       }
     } catch (error) {

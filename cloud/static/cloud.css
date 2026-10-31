@@ -126,6 +126,12 @@ th { color: var(--faint); font-size: 0.78rem; font-weight: 700; letter-spacing: 
 }
 .check { display: flex; gap: 8px; align-items: center; color: var(--text); }
 .check input { width: auto; }
+.mode-menu { display: flex; flex-wrap: wrap; gap: 6px; }
+.mode-menu button { background: transparent; color: var(--muted); border: 1px solid var(--line); }
+.mode-menu button.active { background: #262c20; color: var(--lime); border-color: transparent; }
+form.composer > button[type="submit"] { width: auto; justify-self: start; }
+.row select { width: auto; min-width: 13rem; }
+.composer a { color: var(--lime); }
 .row input[type="number"] { width: 96px; }
 .confirm-box {
   margin-top: 14px; padding: 12px; border-radius: 14px;
