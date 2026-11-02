@@ -421,8 +421,6 @@ def _fetch(method: str, target: str, headers: dict, body: bytes) -> Response:
     for source, dest in (
         ("content-type", "Content-Type"),
         ("range", "Range"),
-        ("if-none-match", "If-None-Match"),
-        ("if-modified-since", "If-Modified-Since"),
     ):
         if headers.get(source):
             upstream[dest] = headers[source]
@@ -578,12 +576,12 @@ def _pass_headers(info, content_type: str, *, rewritten: bool) -> dict[str, str]
     headers = {"Referrer-Policy": "same-origin"}
     for key in _PASS_HEADERS:
         value = info.get(key)
-        if value and not (rewritten and key == "content-length"):
+        if value and not (rewritten and key in {"content-length", "etag", "last-modified"}):
             headers[key.title() if key != "etag" else "ETag"] = value
     if content_type:
         headers["Content-Type"] = content_type
     if rewritten:
-        headers["Cache-Control"] = "no-cache"
+        headers["Cache-Control"] = "no-store"
     return headers
 
 
