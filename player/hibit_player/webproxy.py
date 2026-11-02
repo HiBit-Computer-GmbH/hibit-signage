@@ -326,11 +326,11 @@ def authorize(target: str, referer: str | None, *, follow: bool = False) -> str 
     if reason:
         return reason
     host = _hostname(urlparse(target).netloc)
-    if follow or host in _playlist_hosts() or _known(host):
+    if follow or _listed(host) or _known(host) or _from_player(referer or ""):
         _remember(host)
         return None
     ref_host = _referer_host(referer or "")
-    if ref_host and _known(ref_host):
+    if ref_host and (_known(ref_host) or _listed(ref_host)):
         _remember(host)
         return None
     return "Diese Adresse ist nicht in der Warteschlange."
@@ -711,8 +711,23 @@ def _remember(host: str) -> None:
         _EXTRA[host] = now + 1800
 
 
+def _listed(host: str) -> bool:
+    host = (host or "").lower().rstrip(".")
+    if not host:
+        return False
+    for name in _playlist_hosts():
+        if host == name or host.endswith("." + name):
+            return True
+    return False
+
+
+def _from_player(referer: str) -> bool:
+    path = urlparse(referer).path.rstrip("/")
+    return path == "/player"
+
+
 def _known(host: str) -> bool:
-    if host in _playlist_hosts():
+    if _listed(host):
         return True
     with _HOSTS_LOCK:
         return _EXTRA.get(host, 0) > time.time()
