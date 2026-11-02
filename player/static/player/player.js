@@ -186,6 +186,11 @@ function startImagePan(item, ms) {
   });
 }
 
+function applyColorScheme(frame, item) {
+  const scheme = item && item.color_scheme;
+  frame.style.colorScheme = scheme === "light" || scheme === "dark" ? scheme : "normal";
+}
+
 function webSrc(item) {
   const src = item && item.src || "";
   const scheme = item && item.color_scheme;
@@ -235,6 +240,41 @@ function startWebPan(frame, item, ms) {
   frame.style.transform = `translateY(-${distance}px) scale(${zoom})`;
 }
 
+function webFrameReady(frame) {
+  try {
+    const doc = frame.contentDocument;
+    return Boolean(doc && doc.readyState === "complete" && !webLooksEmpty(frame));
+  } catch (error) {
+    return false;
+  }
+}
+
+function reuseWeb(item, duration) {
+  const src = webSrc(item);
+  if (!src) return false;
+  const current = webFrames[webSlot];
+  const frame = [current].concat(webFrames.filter((entry) => entry !== current))
+    .find((entry) => entry.getAttribute("src") === src && webFrameReady(entry));
+  if (!frame) return false;
+  applyColorScheme(frame, item);
+  webClip.hidden = false;
+  reveal();
+  frame.hidden = false;
+  for (const other of webFrames) {
+    if (other !== frame) {
+      other.hidden = true;
+      resetMotion(other);
+    }
+  }
+  webSlot = webFrames.indexOf(frame);
+  startWebPan(frame, item, duration);
+  failures = 0;
+  report("playing", item, "");
+  animateProgress(duration);
+  timer = setTimeout(next, duration);
+  return true;
+}
+
 function play() {
   clearTimeout(timer);
   const token = ++generation;
@@ -252,11 +292,12 @@ function play() {
     imageClip.hidden = true;
     video.hidden = true;
     video.pause();
+    const duration = (item.duration_seconds || 30) * 1000;
+    if (reuseWeb(item, duration)) return;
     const frame = webFrames.find((entry) => entry.hidden) || webFrames[(webSlot + 1) % webFrames.length];
     frame.dataset.direct = "";
     frame.dataset.gaveUp = "";
     webClip.hidden = false;
-    const duration = (item.duration_seconds || 30) * 1000;
     const show = () => {
       if (token !== generation) return;
       let href = "";
@@ -298,6 +339,7 @@ function play() {
       if (token !== generation) return;
       next();
     }, duration + 8000);
+    applyColorScheme(frame, item);
     frame.removeAttribute("src");
     requestAnimationFrame(() => {
       if (token !== generation) return;

@@ -72,8 +72,8 @@ ImageDir=/usr/share/plymouth/themes/hibit-signage
 ScriptFile=/usr/share/plymouth/themes/hibit-signage/hibit.script
 EOF
 cat > "$THEME/hibit.script" << 'EOF'
-Window.SetBackgroundTopColor(0.063, 0.075, 0.055);
-Window.SetBackgroundBottomColor(0.063, 0.075, 0.055);
+Window.SetBackgroundTopColor(0.0706, 0.0784, 0.0627);
+Window.SetBackgroundBottomColor(0.0706, 0.0784, 0.0627);
 
 logo.image = Image("logo.png");
 max_w = Window.GetWidth() * 0.46;

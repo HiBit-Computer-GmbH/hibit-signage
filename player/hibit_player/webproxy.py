@@ -222,7 +222,7 @@ _BOOTSTRAP = """
       else if (wantsLight && !wantsDark) matches = FORCE === "light";
       else matches = nativeMatch(raw).matches;
       if (/^\\s*not\\b/i.test(raw)) matches = !matches;
-      const list = nativeMatch(matches ? "(min-width: 0px)" : "(max-width: 0px)");
+      const list = nativeMatch(matches ? "(min-width: 0px)" : "(min-width: 999999px)");
       try { Object.defineProperty(list, "media", { configurable: true, get: function () { return raw; } }); } catch (e) {}
       return list;
     };
