@@ -12,16 +12,16 @@
   <main id="stage">
     <div id="image-clip" hidden><img id="image" alt=""></div>
     <video id="video" hidden playsinline></video>
-    <div id="web-clip" hidden><iframe id="web" title="Webseite" hidden referrerpolicy="same-origin" sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-downloads allow-pointer-lock" allow="autoplay; fullscreen; encrypted-media"></iframe></div>
+    <div id="web-clip" hidden><iframe id="web" class="web-frame" title="Webseite" hidden referrerpolicy="same-origin" sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-downloads allow-pointer-lock" allow="autoplay; fullscreen; encrypted-media"></iframe><iframe id="web-back" class="web-frame" title="Webseite" hidden referrerpolicy="same-origin" sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-downloads allow-pointer-lock" allow="autoplay; fullscreen; encrypted-media"></iframe></div>
   </main>
-  <section id="splash">
+  <section id="splash" hidden>
     <div class="brand">
       <span class="mark">HiBit</span>
       <span class="product">Signage</span>
     </div>
     <p id="splash-message">Keine Inhalte in der Warteschlange</p>
-    <div id="addresses"></div>
-    <p class="hint">Shell zum Debuggen: Strg + Alt + S oder Strg + Alt + F2<br>Zurück zur Anzeige: Strg + Alt + F1</p>
+    <div id="addresses" hidden></div>
+    <p class="hint" hidden>Shell zum Debuggen: Strg + Alt + S oder Strg + Alt + F2<br>Zurück zur Anzeige: Strg + Alt + F1</p>
   </section>
   <div id="progress" hidden></div>
   <script src="player.js?v={{version}}"></script>

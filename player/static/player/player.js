@@ -6,9 +6,11 @@ const imageClip = document.getElementById("image-clip");
 const image = document.getElementById("image");
 const video = document.getElementById("video");
 const webClip = document.getElementById("web-clip");
-const web = document.getElementById("web");
+const webFrames = [...document.querySelectorAll(".web-frame")];
+let webSlot = 0;
 const splash = document.getElementById("splash");
 const splashMessage = document.getElementById("splash-message");
+const splashHint = document.querySelector("#splash .hint");
 const addresses = document.getElementById("addresses");
 const progress = document.getElementById("progress");
 
@@ -45,6 +47,8 @@ function report(phase, item, detail) {
 }
 
 function hold(message) {
+  addresses.hidden = true;
+  splashHint.hidden = true;
   splash.hidden = false;
   splashMessage.textContent = message || "Wird geladen";
 }
@@ -77,6 +81,8 @@ function showSplash(info, message, phase) {
   video.hidden = true;
   video.pause();
   hideWeb();
+  addresses.hidden = false;
+  splashHint.hidden = false;
   splash.hidden = false;
   splashMessage.textContent = message || "Keine Inhalte in der Warteschlange";
   report(phase || "empty", items[index], splashMessage.textContent);
@@ -92,10 +98,13 @@ function showSplash(info, message, phase) {
 }
 
 function hideWeb() {
-  resetMotion(web);
-  web.hidden = true;
+  for (const frame of webFrames) {
+    resetMotion(frame);
+    frame.hidden = true;
+    frame.onload = null;
+    if (frame.getAttribute("src")) frame.removeAttribute("src");
+  }
   webClip.hidden = true;
-  if (web.getAttribute("src")) web.removeAttribute("src");
 }
 
 function stopMedia() {
@@ -133,7 +142,9 @@ function fail() {
     const message = item && item.name
       ? `„${item.name}“ kann gerade nicht geladen werden`
       : "Inhalte können gerade nicht abgespielt werden";
-    showSplash(window.__display, message, "failed");
+    const visible = webFrames.some((frame) => !frame.hidden) || !image.hidden || !video.hidden;
+    if (!visible) hold(message);
+    report("failed", item, message);
     return;
   }
   next();
@@ -152,10 +163,9 @@ function slide(node, distance, ms) {
   if (distance < 2) return;
   node.style.transition = "none";
   node.style.transform = "translateY(0)";
-  requestAnimationFrame(() => {
-    node.style.transition = `transform ${ms}ms linear`;
-    node.style.transform = `translateY(-${distance}px)`;
-  });
+  void node.offsetWidth;
+  node.style.transition = `transform ${ms}ms linear`;
+  node.style.transform = `translateY(-${distance}px)`;
 }
 
 function startImagePan(item, ms) {
@@ -175,15 +185,15 @@ function startImagePan(item, ms) {
   });
 }
 
-function startWebPan(item, ms) {
-  resetMotion(web);
+function startWebPan(frame, item, ms) {
+  resetMotion(frame);
   const speed = Number(item && item.scroll_speed) || 0;
   if (!speed) return;
   const view = webClip.clientHeight || window.innerHeight;
   const distance = Math.min(30000, Math.round(speed * ms / 1000));
-  web.classList.add("pan");
-  web.style.height = `${view + distance}px`;
-  slide(web, distance, ms);
+  frame.classList.add("pan");
+  frame.style.height = `${view + distance}px`;
+  slide(frame, distance, ms);
 }
 
 function play() {
@@ -194,7 +204,6 @@ function play() {
     fail();
     return;
   }
-  if (!splash.hidden) hold(item.name || "Wird geladen");
   report("loading", item, "");
   playingId = item.id;
   const fit = item.fit === "contain" ? "contain" : "cover";
@@ -204,34 +213,57 @@ function play() {
     imageClip.hidden = true;
     video.hidden = true;
     video.pause();
-    web.dataset.direct = "";
-    web.dataset.gaveUp = "";
+    const frame = webFrames.find((entry) => entry.hidden) || webFrames[(webSlot + 1) % webFrames.length];
+    frame.dataset.direct = "";
+    frame.dataset.gaveUp = "";
     webClip.hidden = false;
-    web.hidden = false;
     const duration = (item.duration_seconds || 30) * 1000;
-    startWebPan(item, duration);
-    web.onload = () => {
+    const show = () => {
       if (token !== generation) return;
+      let href = "";
+      try { href = frame.contentWindow.location.href; } catch (error) { return; }
+      if (!href.includes("/player/site/")) return;
       window.setTimeout(() => {
         if (token !== generation) return;
-        const phase = webLooksEmpty() ? "blank" : "playing";
-        if (phase === "playing") {
-          failures = 0;
-          reveal();
-        } else {
-          hold(item.name ? `„${item.name}“ bleibt leer` : "Die Seite bleibt leer");
+        clearTimeout(timer);
+        if (webLooksEmpty(frame)) {
+          if (webFrames[webSlot].hidden || webFrames[webSlot] === frame) {
+            hold(item.name ? `„${item.name}“ bleibt leer` : "Die Seite bleibt leer");
+          }
+          report("blank", item, "");
+          timer = setTimeout(next, duration);
+          return;
         }
-        report(phase, item, "");
+        failures = 0;
+        reveal();
+        frame.hidden = false;
+        for (const other of webFrames) {
+          if (other !== frame) {
+            other.hidden = true;
+            resetMotion(other);
+          }
+        }
+        webSlot = webFrames.indexOf(frame);
+        startWebPan(frame, item, duration);
+        report("playing", item, "");
+        animateProgress(duration);
+        timer = setTimeout(next, duration);
       }, 1500);
     };
-    web.onerror = () => {
+    frame.onload = show;
+    frame.onerror = () => {
       if (token !== generation) return;
-      giveUp(web);
+      giveUp(frame);
     };
-    if (web.getAttribute("src") !== item.src) web.src = item.src;
-    else if (web.contentDocument && web.contentDocument.readyState === "complete") web.onload();
-    animateProgress(duration);
-    timer = setTimeout(next, duration);
+    timer = setTimeout(() => {
+      if (token !== generation) return;
+      next();
+    }, duration + 8000);
+    frame.removeAttribute("src");
+    requestAnimationFrame(() => {
+      if (token !== generation) return;
+      frame.src = item.src;
+    });
     return;
   }
   hideWeb();
@@ -302,9 +334,9 @@ function durationTimer(item) {
   return (item.duration_seconds || 10) * 1000;
 }
 
-function webLooksEmpty() {
+function webLooksEmpty(frame) {
   try {
-    const doc = web.contentDocument;
+    const doc = frame.contentDocument;
     if (!doc || !doc.body) return true;
     const text = (doc.body.innerText || "").replace(/\s+/g, " ").trim();
     if (text.length > 1) return false;
