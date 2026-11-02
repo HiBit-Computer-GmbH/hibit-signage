@@ -12,6 +12,7 @@ EnvironmentFile=/etc/hibit/player.env
 ExecStart=/opt/hibit-signage/.venv/bin/python -m hibit_player
 Restart=always
 RestartSec=2
+KillMode=process
 
 [Install]
 WantedBy=multi-user.target

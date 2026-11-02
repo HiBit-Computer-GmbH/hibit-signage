@@ -1,0 +1,7 @@
+Metadata-Version: 2.4
+Name: hibit-update-prep
+Version: 1.1.8
+Summary: Hält das HiBit-Update über den Dienstneustart am Leben.
+Requires-Python: >=3.11
+Dynamic: requires-python
+Dynamic: summary

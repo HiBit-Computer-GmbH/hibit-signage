@@ -21,15 +21,31 @@ trap finish_fail ERR
 sleep 1
 cd "$INSTALL"
 export GIT_TERMINAL_PROMPT=0
+bash "$INSTALL/install/updateprep/hibit-update-protect.sh" || true
 echo "Hole das Repository …"
 git -c safe.directory="$INSTALL" fetch origin
 echo "Aktualisiere den Stand …"
 git -c safe.directory="$INSTALL" pull --ff-only
 echo "Installiere Abhängigkeiten …"
 "$INSTALL/.venv/bin/pip" install -r "$INSTALL/cloud/requirements.txt"
+install -m 755 "$INSTALL/install/hibit-update-cloud" /usr/local/sbin/hibit-update-cloud || true
+bash "$INSTALL/install/updateprep/hibit-update-protect.sh" || true
 echo "Starte die Cloud neu …"
 systemctl restart hibit-cloud
+PORT="$(grep -E '^HIBIT_PORT=' /etc/hibit/cloud.env 2>/dev/null | cut -d= -f2-)"
+PORT="${PORT:-8090}"
+ready=0
+for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30; do
+  if "$INSTALL/.venv/bin/python" -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:${PORT}/api/health', timeout=2).read()" >/dev/null 2>&1; then
+    ready=1
+    break
+  fi
+  sleep 1
+done
+if [[ "$ready" -ne 1 ]]; then
+  echo "Die Cloud ist nach dem Neustart nicht erreichbar."
+  exit 1
+fi
 trap - ERR
-install -m 755 "$INSTALL/install/hibit-update-cloud" /usr/local/sbin/hibit-update-cloud || true
 echo "done" > "$STATUS"
 echo "=== Cloud-Update fertig ==="
