@@ -364,7 +364,6 @@ def _fetch(method: str, target: str, headers: dict, body: bytes) -> Response:
         "User-Agent": headers.get("user-agent") or _BROWSER,
         "Accept": headers.get("accept") or "*/*",
         "Accept-Language": headers.get("accept-language") or "de-DE,de;q=0.9,en;q=0.8",
-        "Accept-Encoding": "gzip, deflate",
     }
     for source, dest in (
         ("content-type", "Content-Type"),
@@ -426,12 +425,16 @@ def _fetch(method: str, target: str, headers: dict, body: bytes) -> Response:
             header_map = _pass_headers(info, media, rewritten=True)
             return Response(text.encode("utf-8"), status_code=status, headers=header_map, media_type=media)
         return _plain("Die Seite ist zu groß.", 502)
+    stream = response
+    if encoding in {"gzip", "x-gzip"}:
+        stream = gzip.GzipFile(fileobj=response)
+        encoding = ""
     header_map = _pass_headers(info, content_type, rewritten=False)
-    if info.get("Content-Length"):
+    if info.get("Content-Length") and not encoding and stream is response:
         header_map["Content-Length"] = info.get("Content-Length")
     if encoding:
         header_map["Content-Encoding"] = encoding
-    return StreamingResponse(_chunks(response), status_code=status, headers=header_map)
+    return StreamingResponse(_chunks(stream, response), status_code=status, headers=header_map)
 
 
 def referer_to_upstream(referer: str) -> str | None:
@@ -462,15 +465,16 @@ def _redirect(exc: _Redirect, target: str) -> Response:
     return RedirectResponse(path, status_code=exc.code)
 
 
-def _chunks(response):
+def _chunks(stream, response=None):
+    closer = response if response is not None else stream
     try:
         while True:
-            block = response.read(64 * 1024)
+            block = stream.read(64 * 1024)
             if not block:
                 break
             yield block
     finally:
-        response.close()
+        closer.close()
 
 
 def _text(raw: bytes, encoding: str, content_type: str) -> str:

@@ -10,6 +10,7 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
   if (url.origin !== self.location.origin) return;
   if (url.pathname.startsWith("/player/site/")) return;
+  if (url.pathname.startsWith("/media/") || url.pathname.startsWith("/api/") || url.pathname.startsWith("/console")) return;
   const referrer = event.request.referrer || "";
   if (!referrer) return;
   let ref;

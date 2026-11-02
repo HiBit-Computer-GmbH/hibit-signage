@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import gzip
 import hashlib
 import logging
 import mimetypes
@@ -18,9 +19,9 @@ from pathlib import Path
 from urllib.parse import quote, urlparse
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 
-from hibit_player import agent, db, mounts, power, updater, webproxy
+from hibit_player import agent, db, mounts, playback, power, updater, webproxy
 from hibit_player.shell import shells
 from hibit_player.config import data_dir, install_dir, media_dir, port, version
 from hibit_player.network import hostname, local_ips
@@ -161,6 +162,7 @@ def _playlist() -> dict:
                 "fit": item.get("fit") or "cover",
                 "scroll_speed": int(item.get("scroll_speed") or 0),
                 "muted": bool(item.get("muted")),
+                "remote": item.get("url") if item.get("origin") == "url" and item.get("kind") in {"image", "video"} else "",
             }
         )
     return {"revision": int(db.get_setting("playlist_revision") or "0"), "items": items}
@@ -204,7 +206,7 @@ async def guard(request: Request, call_next):
     public = path.startswith("/media/") or path.startswith("/player") or path.startswith("/console") or path in {"/", "/favicon.ico"}
     if request.method == "GET" and path in {"/api/health", "/api/display", "/api/playlist"}:
         public = True
-    if request.method == "POST" and path == "/api/login":
+    if request.method == "POST" and path in {"/api/login", "/api/display/report", "/api/display/frame"}:
         public = True
     if not public and path.startswith("/api/"):
         user = db.user_for_token(request.cookies.get(COOKIE, ""))
@@ -229,13 +231,44 @@ def health():
 @app.get("/api/display")
 def display():
     ips = local_ips()
+    state = playback.snapshot()
     return {
         "hostname": hostname(),
         "ips": ips,
         "port": port(),
         "version": version(),
         "queue_empty": not any(item["enabled"] for item in db.list_queue()),
+        "watching": bool(state.get("watching")),
+        "playback": {key: state.get(key) or "" for key in ("phase", "name", "kind", "detail")},
     }
+
+
+@app.post("/api/display/report")
+async def display_report(request: Request):
+    if not _origin_ok(request):
+        raise HTTPException(403, "Origin abgelehnt")
+    data = await _json(request)
+    phase = str(data.get("phase") or "")
+    if phase not in {"empty", "loading", "playing", "failed", "blank"}:
+        phase = "empty"
+    playback.report(
+        phase,
+        str(data.get("name") or "")[:180],
+        str(data.get("kind") or "")[:20],
+        str(data.get("detail") or "")[:300],
+    )
+    return {"ok": True}
+
+
+@app.post("/api/display/frame")
+async def display_frame(request: Request):
+    if not _origin_ok(request):
+        raise HTTPException(403, "Origin abgelehnt")
+    body = await request.body()
+    if len(body) > 500_000 or not body.startswith(b"\xff\xd8"):
+        raise HTTPException(400, "Kein Bild")
+    playback.note_frame(body)
+    return {"ok": True}
 
 
 @app.get("/api/playlist")
@@ -485,6 +518,12 @@ def media_local(stored_name: str):
     return FileResponse(path, media_type=media_type)
 
 
+_MEDIA_UA = (
+    "Mozilla/5.0 (X11; Linux aarch64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+)
+
+
 def _reject_remote(url: str) -> str | None:
     parsed = urlparse(url)
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
@@ -516,7 +555,66 @@ def _remote_allowed(url: str) -> bool:
     return False
 
 
-@app.get("/media/remote")
+def _magic(prefix: bytes) -> str:
+    if prefix.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if prefix.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if prefix.startswith((b"GIF87a", b"GIF89a")):
+        return "image/gif"
+    if prefix.startswith(b"BM"):
+        return "image/bmp"
+    if len(prefix) >= 12 and prefix.startswith(b"RIFF") and prefix[8:12] == b"WEBP":
+        return "image/webp"
+    sample = prefix.lstrip()[:240].lower()
+    if sample.startswith((b"<!doctype", b"<html", b"{")):
+        return "text/html"
+    if sample.startswith(b"<svg") or b"<svg" in sample:
+        return "image/svg+xml"
+    if sample.startswith(b"<"):
+        return "text/html"
+    if len(prefix) >= 12 and prefix[4:8] == b"ftyp":
+        brand = prefix[8:12]
+        if brand in {b"avif", b"avis"}:
+            return "image/avif"
+        return "video/mp4"
+    if prefix.startswith(b"\x1a\x45\xdf\xa3"):
+        return "video/webm"
+    if prefix.startswith(b"OggS"):
+        return "video/ogg"
+    return ""
+
+
+def _range_start(header: str) -> int:
+    if not header or "=" not in header:
+        return 0
+    try:
+        start = header.split("=", 1)[1].split("-", 1)[0].strip()
+        return int(start) if start else 0
+    except ValueError:
+        return 0
+
+
+def _choose_media_type(prefix: bytes, declared: str, target: str, range_start: int) -> str | None:
+    declared = (declared or "").split(";", 1)[0].strip().lower()
+    sniffed = _magic(prefix) if range_start == 0 else ""
+    if sniffed == "text/html":
+        return None
+    if sniffed.startswith(("image/", "video/")):
+        if declared.startswith(("image/", "video/")):
+            return declared
+        return sniffed
+    if declared.startswith(("image/", "video/")):
+        return declared
+    guessed = mimetypes.guess_type(urlparse(target).path)[0] or ""
+    if guessed.startswith(("image/", "video/")):
+        return guessed
+    if range_start > 0:
+        return declared or "application/octet-stream"
+    return None
+
+
+@app.api_route("/media/remote", methods=["GET", "HEAD"])
 def media_remote(u: str, request: Request):
     target = u.strip()
     if not _remote_allowed(target):
@@ -524,47 +622,66 @@ def media_remote(u: str, request: Request):
     reason = _reject_remote(target)
     if reason:
         raise HTTPException(400, reason)
+    parsed = urlparse(target)
     headers = {
-        "User-Agent": "Mozilla/5.0 (X11; Linux aarch64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36 HiBitSignage",
-        "Accept": "image/avif,image/webp,image/*,video/*,*/*;q=0.8",
+        "User-Agent": _MEDIA_UA,
+        "Accept": "image/avif,image/webp,image/apng,image/*,video/mp4,video/webm,video/*,*/*;q=0.8",
+        "Accept-Language": "de-DE,de;q=0.9,en;q=0.8",
+        "Referer": f"{parsed.scheme}://{parsed.netloc}/",
     }
-    if request.headers.get("range"):
-        headers["Range"] = request.headers["range"]
+    range_header = request.headers.get("range") or ""
+    if range_header:
+        headers["Range"] = range_header
     opener = urllib.request.build_opener(_RemoteRedirect)
-    upstream = urllib.request.Request(target, headers=headers)
+    upstream = urllib.request.Request(target, headers=headers, method="GET")
     try:
-        response = opener.open(upstream, timeout=30)
+        response = opener.open(upstream, timeout=20)
     except urllib.error.HTTPError as exc:
-        log.warning("Adresse abgelehnt: %s", urlparse(target).netloc)
+        log.warning("Adresse abgelehnt: %s", parsed.netloc)
         raise HTTPException(502, "Die Adresse hat den Inhalt abgelehnt.") from exc
     except Exception as exc:
-        log.warning("Adresse nicht erreichbar: %s", urlparse(target).netloc)
+        log.warning("Adresse nicht erreichbar: %s", parsed.netloc)
         raise HTTPException(502, "Die Adresse ist nicht erreichbar.") from exc
-    content_type = (response.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
-    if content_type.startswith("text/") or content_type in {"application/json", "application/xml", "application/xhtml+xml"}:
+    status = getattr(response, "status", 200) or 200
+    if status not in {200, 206}:
+        status = 200
+    declared = response.headers.get("Content-Type") or ""
+    encoding = (response.headers.get("Content-Encoding") or "").lower()
+    body = response
+    decoded = False
+    if request.method != "HEAD" and encoding in {"gzip", "x-gzip"}:
+        body = gzip.GzipFile(fileobj=response)
+        decoded = True
+    out = {"Cache-Control": "private, max-age=60", "Accept-Ranges": "bytes"}
+    if response.headers.get("Content-Range"):
+        out["Content-Range"] = response.headers["Content-Range"]
+    if request.method == "HEAD":
+        media = _choose_media_type(b"", declared, response.geturl() or target, 0) or "application/octet-stream"
+        if response.headers.get("Content-Length") and not decoded:
+            out["Content-Length"] = response.headers["Content-Length"]
+        response.close()
+        return Response(status_code=status, media_type=media, headers=out)
+    prefix = body.read(64)
+    media = _choose_media_type(prefix, declared, getattr(response, "geturl", lambda: target)() or target, _range_start(range_header))
+    if not media:
         response.close()
         raise HTTPException(415, "Die Adresse liefert kein Bild oder Video.")
-    if not content_type or content_type == "application/octet-stream":
-        content_type = mimetypes.guess_type(urlparse(response.geturl()).path)[0] or "application/octet-stream"
+    if response.headers.get("Content-Length") and not decoded:
+        out["Content-Length"] = response.headers["Content-Length"]
 
     def chunks():
         try:
+            if prefix:
+                yield prefix
             while True:
-                block = response.read(64 * 1024)
+                block = body.read(64 * 1024)
                 if not block:
                     break
                 yield block
         finally:
             response.close()
 
-    out = {"Cache-Control": "private, max-age=60"}
-    status = getattr(response, "status", 200) or 200
-    if response.headers.get("Content-Range"):
-        out["Content-Range"] = response.headers["Content-Range"]
-        out["Accept-Ranges"] = "bytes"
-    if response.headers.get("Content-Length"):
-        out["Content-Length"] = response.headers["Content-Length"]
-    return StreamingResponse(chunks(), status_code=status if status in {200, 206} else 200, media_type=content_type, headers=out)
+    return StreamingResponse(chunks(), status_code=status, media_type=media, headers=out)
 
 
 @app.get("/api/shares")

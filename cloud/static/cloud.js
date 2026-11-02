@@ -234,6 +234,10 @@ function deviceHtml() {
   }
   const tabs = [["queue", "Warteschlange"], ["media", "Medien"], ["shares", "Freigaben"], ["terminal", "Terminal"], ["settings", "Gerät"]];
   return `<div class="page-head"><div><h1>${esc(device.name)}</h1><p class="muted">${esc(device.tenant_name || "")} · ${statusBadge(device)} · Rev. ${device.state_revision}</p></div></div>
+    <section class="card panel">
+      <div class="spread"><div><div class="title">Anzeige</div><p class="muted" id="preview-state">Warte auf den Pi</p></div></div>
+      <div class="preview" id="preview-frame"><p class="placeholder">Noch kein Bild. So ist zu sehen, ob der Pi eine Seite, ein Bild oder ein Video wirklich zeigt.</p></div>
+    </section>
     <div class="tabs">${tabs.map(([id, label]) => `<a class="${tab === id ? "active" : ""}" href="#/device/${device.id}/${id}">${label}</a>`).join("")}</div>
     ${tab === "media" ? mediaTab() : tab === "shares" ? sharesTab() : tab === "terminal" ? '<section class="term-frame"><div class="term-bar"><span>Shell auf dem Pi</span><span>Strg+C bricht ab</span></div><div id="term"></div></section>' : tab === "settings" ? settingsTab() : queueTab()}`;
 }
@@ -267,7 +271,7 @@ function enqueueFields(files) {
       <label>Sekunden<input name="duration_seconds" type="number" min="1" value="60" required></label>
       <label>Scroll px/s<input name="scroll_speed" type="number" min="0" max="4000" value="0"></label>
     </div>
-    <p class="muted">Seiten, die eine Einbettung verbieten, bleiben leer. Scroll px/s schiebt die Seite nach unten, 0 bleibt oben.</p>`;
+    <p class="muted">Der Player lädt die Seite selbst. Scroll px/s schiebt sie nach unten, 0 bleibt oben.</p>`;
   }
   const image = mode === "image-url";
   return `<div class="grid-2">
@@ -486,6 +490,51 @@ function deviceId() {
   return route().id;
 }
 
+let previewWatch = 0;
+
+function previewLabel(playback) {
+  const name = playback && playback.name ? `„${playback.name}“ ` : "";
+  const phase = playback && playback.phase;
+  if (phase === "failed") return `${name}kann gerade nicht geladen werden`;
+  if (phase === "loading") return `${name}wird geladen`;
+  if (phase === "blank") return `${name}bleibt leer`;
+  if (phase === "playing") return `${name}wird angezeigt`;
+  if (phase === "empty") return "Die Warteschlange ist leer";
+  return "Warte auf den Pi";
+}
+
+function startPreview() {
+  const token = ++previewWatch;
+  const id = deviceId();
+  const tick = async () => {
+    if (token !== previewWatch || deviceId() !== id || route().name !== "device") return;
+    const frame = document.getElementById("preview-frame");
+    const stateEl = document.getElementById("preview-state");
+    if (!frame) return;
+    try {
+      const data = await api(`/api/devices/${id}/preview`, { cache: "no-store" });
+      if (token !== previewWatch) return;
+      if (stateEl) stateEl.textContent = previewLabel(data.state);
+      if (data.image) {
+        let img = document.getElementById("preview-img");
+        if (!img) {
+          frame.textContent = "";
+          img = document.createElement("img");
+          img.id = "preview-img";
+          img.alt = "Aktuelle Anzeige";
+          frame.appendChild(img);
+        }
+        img.src = `data:image/jpeg;base64,${data.image}`;
+      }
+    } catch (error) {
+      if (token !== previewWatch) return;
+      if (stateEl) stateEl.textContent = error.message || "Gerät ist gerade nicht erreichbar";
+    }
+    setTimeout(tick, 2000);
+  };
+  tick();
+}
+
 function bind(current) {
   const reload = document.getElementById("reload");
   if (reload) reload.addEventListener("click", () => show());
@@ -509,6 +558,7 @@ function bind(current) {
     if (current.tab === "shares") bindShares();
     if (current.tab === "terminal") state.term = window.HiBitTerm.mount(document.getElementById("term"), `/ws/devices/${deviceId()}/shell`);
     if (current.tab === "settings") bindSettings();
+    startPreview();
   }
   if (current.name === "tenants") bindTenants();
   if (current.name === "users") bindUsers();

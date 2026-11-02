@@ -19,6 +19,7 @@ let timer = null;
 let failures = 0;
 let playingId = null;
 let generation = 0;
+let retryAt = 0;
 
 function resetMotion(node) {
   node.classList.remove("pan");
@@ -29,7 +30,43 @@ function resetMotion(node) {
   node.style.objectFit = "";
 }
 
-function showSplash(info, message) {
+function report(phase, item, detail) {
+  const body = {
+    phase,
+    name: item && item.name ? item.name : "",
+    kind: item && item.kind ? item.kind : "",
+    detail: detail || "",
+  };
+  fetch("/api/display/report", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  }).catch(() => {});
+}
+
+function hold(message) {
+  splash.hidden = false;
+  splashMessage.textContent = message || "Wird geladen";
+}
+
+function reveal() {
+  splash.hidden = true;
+}
+
+function tryDirect(node, item) {
+  if (!item || !item.remote || node.dataset.direct === "1") return false;
+  node.dataset.direct = "1";
+  node.src = item.remote;
+  return true;
+}
+
+function giveUp(node) {
+  if (node.dataset.gaveUp === String(generation)) return;
+  node.dataset.gaveUp = String(generation);
+  fail();
+}
+
+function showSplash(info, message, phase) {
   clearTimeout(timer);
   progress.hidden = true;
   progress.innerHTML = "";
@@ -42,6 +79,7 @@ function showSplash(info, message) {
   hideWeb();
   splash.hidden = false;
   splashMessage.textContent = message || "Keine Inhalte in der Warteschlange";
+  report(phase || "empty", items[index], splashMessage.textContent);
   const ips = info && info.ips && info.ips.length ? info.ips : [];
   const port = info && info.port ? info.port : location.port;
   if (!ips.length) {
@@ -88,9 +126,14 @@ function animateProgress(ms) {
 
 function fail() {
   failures += 1;
+  const item = items[index];
   if (failures >= Math.max(items.length, 1)) {
     failures = 0;
-    showSplash(window.__display, "Inhalte können gerade nicht abgespielt werden");
+    retryAt = Date.now() + 15000;
+    const message = item && item.name
+      ? `„${item.name}“ kann gerade nicht geladen werden`
+      : "Inhalte können gerade nicht abgespielt werden";
+    showSplash(window.__display, message, "failed");
     return;
   }
   next();
@@ -151,7 +194,8 @@ function play() {
     fail();
     return;
   }
-  splash.hidden = true;
+  if (!splash.hidden) hold(item.name || "Wird geladen");
+  report("loading", item, "");
   playingId = item.id;
   const fit = item.fit === "contain" ? "contain" : "cover";
   if (item.kind === "web") {
@@ -160,14 +204,34 @@ function play() {
     imageClip.hidden = true;
     video.hidden = true;
     video.pause();
+    web.dataset.direct = "";
+    web.dataset.gaveUp = "";
     webClip.hidden = false;
     web.hidden = false;
     const duration = (item.duration_seconds || 30) * 1000;
     startWebPan(item, duration);
+    web.onload = () => {
+      if (token !== generation) return;
+      window.setTimeout(() => {
+        if (token !== generation) return;
+        const phase = webLooksEmpty() ? "blank" : "playing";
+        if (phase === "playing") {
+          failures = 0;
+          reveal();
+        } else {
+          hold(item.name ? `„${item.name}“ bleibt leer` : "Die Seite bleibt leer");
+        }
+        report(phase, item, "");
+      }, 1500);
+    };
+    web.onerror = () => {
+      if (token !== generation) return;
+      giveUp(web);
+    };
     if (web.getAttribute("src") !== item.src) web.src = item.src;
+    else if (web.contentDocument && web.contentDocument.readyState === "complete") web.onload();
     animateProgress(duration);
     timer = setTimeout(next, duration);
-    failures = 0;
     return;
   }
   hideWeb();
@@ -175,15 +239,34 @@ function play() {
     resetMotion(image);
     image.hidden = true;
     imageClip.hidden = true;
+    video.dataset.direct = "";
+    video.dataset.gaveUp = "";
+    video.dataset.token = String(token);
     video.hidden = false;
     video.style.objectFit = fit;
     video.muted = Boolean(item.muted);
-    if (video.getAttribute("src") !== item.src) video.src = item.src;
-    const started = video.play();
-    if (started) started.catch(() => fail());
+    const start = () => {
+      const started = video.play();
+      if (!started) return;
+      started.catch(() => {
+        if (video.dataset.token !== String(generation)) return;
+        video.muted = true;
+        const again = video.play();
+        if (again) again.catch(() => {
+          if (tryDirect(video, item)) return;
+          giveUp(video);
+        });
+      });
+    };
+    if (video.getAttribute("src") !== item.src || !(video.readyState >= 2 && video.videoWidth)) {
+      video.removeAttribute("src");
+      video.load();
+      video.src = item.src;
+    }
+    start();
     if (item.duration_seconds) {
       animateProgress(item.duration_seconds * 1000);
-      timer = setTimeout(next, item.duration_seconds * 1000);
+      timer = setTimeout(next, durationTimer(item));
     } else {
       progress.hidden = true;
     }
@@ -192,6 +275,8 @@ function play() {
   video.pause();
   video.hidden = true;
   image.dataset.token = String(token);
+  image.dataset.direct = "";
+  image.dataset.gaveUp = "";
   imageClip.hidden = false;
   image.hidden = false;
   image.style.objectFit = fit;
@@ -199,21 +284,46 @@ function play() {
   const show = () => {
     if (image.dataset.token !== String(generation)) return;
     failures = 0;
+    reveal();
+    report("playing", item, "");
     startImagePan(item, duration);
   };
   image.onload = show;
-  if (image.getAttribute("src") !== item.src) image.src = item.src;
+  if (image.getAttribute("src") !== item.src || !(image.complete && image.naturalWidth)) {
+    image.removeAttribute("src");
+    image.src = item.src;
+  }
   if (image.complete && image.naturalWidth) show();
   animateProgress(duration);
   timer = setTimeout(next, duration);
 }
 
+function durationTimer(item) {
+  return (item.duration_seconds || 10) * 1000;
+}
+
+function webLooksEmpty() {
+  try {
+    const doc = web.contentDocument;
+    if (!doc || !doc.body) return true;
+    const text = (doc.body.innerText || "").replace(/\s+/g, " ").trim();
+    if (text.length > 1) return false;
+    return ![...doc.body.children].some((node) => !["SCRIPT", "STYLE", "LINK", "META"].includes(node.tagName));
+  } catch (error) {
+    return false;
+  }
+}
+
 image.addEventListener("error", () => {
-  if (image.hidden || image.dataset.token !== String(generation)) return;
-  fail();
+  if (!image.getAttribute("src") || image.dataset.token !== String(generation)) return;
+  if (tryDirect(image, items[index])) return;
+  giveUp(image);
 });
 video.addEventListener("playing", () => {
+  if (video.dataset.token !== String(generation)) return;
   failures = 0;
+  reveal();
+  report("playing", items[index], "");
   if (!items[index] || items[index].duration_seconds || !video.duration) return;
   animateProgress(video.duration * 1000);
 });
@@ -221,7 +331,9 @@ video.addEventListener("ended", () => {
   if (items[index] && !items[index].duration_seconds) next();
 });
 video.addEventListener("error", () => {
-  if (!video.hidden) fail();
+  if (!video.getAttribute("src") || video.dataset.token !== String(generation)) return;
+  if (tryDirect(video, items[index])) return;
+  giveUp(video);
 });
 
 async function poll() {
@@ -235,26 +347,51 @@ async function poll() {
       items = [];
       revision = list.revision;
       playingId = null;
+      retryAt = 0;
       stopMedia();
-      showSplash(info, "");
+      showSplash(info, "", "empty");
       return;
     }
     const changed = list.revision !== revision;
-    if (changed || splash.hidden === false) {
-      const current = items[index] && items[index].id;
-      items = list.items;
-      revision = list.revision;
-      const keep = items.findIndex((item) => item.id === current);
-      index = keep >= 0 ? keep : 0;
-      if (changed || playingId !== items[index].id || !splash.hidden) {
-        failures = 0;
-        play();
-      }
+    const current = items[index] && items[index].id;
+    items = list.items;
+    revision = list.revision;
+    const keep = items.findIndex((item) => item.id === current);
+    const nextIndex = keep >= 0 ? keep : 0;
+    if (!changed && retryAt && Date.now() < retryAt) return;
+    if (!changed && !retryAt && playingId && items[nextIndex] && playingId === items[nextIndex].id) {
+      index = nextIndex;
+      return;
     }
+    index = nextIndex;
+    failures = 0;
+    retryAt = 0;
+    play();
   } catch (error) {
-    if (!items.length) showSplash(window.__display, "Player wartet auf den Dienst");
+    if (!items.length) showSplash(window.__display, "Player wartet auf den Dienst", "empty");
   }
+}
+
+async function postFrame() {
+  if (!window.__display || !window.__display.watching) return;
+  const source = !image.hidden && image.naturalWidth ? image : !video.hidden && video.videoWidth ? video : null;
+  if (!source) return;
+  const canvas = postFrame.canvas || (postFrame.canvas = document.createElement("canvas"));
+  const width = source.videoWidth || source.naturalWidth;
+  const height = source.videoHeight || source.naturalHeight;
+  const scale = Math.min(1, 960 / width);
+  canvas.width = Math.max(1, Math.round(width * scale));
+  canvas.height = Math.max(1, Math.round(height * scale));
+  try {
+    canvas.getContext("2d").drawImage(source, 0, 0, canvas.width, canvas.height);
+  } catch (error) {
+    return;
+  }
+  const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.6));
+  if (!blob) return;
+  await fetch("/api/display/frame", { method: "POST", headers: { "Content-Type": "image/jpeg" }, body: blob }).catch(() => {});
 }
 
 poll();
 setInterval(poll, 3000);
+setInterval(() => { postFrame(); }, 2000);

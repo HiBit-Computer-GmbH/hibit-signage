@@ -222,7 +222,7 @@ function enqueueFields() {
       <label>Sekunden<input name="duration_seconds" type="number" min="1" value="60" required></label>
       <label>Scroll px/s<input name="scroll_speed" type="number" min="0" max="4000" value="0"></label>
     </div>
-    <p class="muted">Seiten, die eine Einbettung verbieten, bleiben leer. Scroll px/s schiebt die Seite nach unten, 0 bleibt oben.</p>`;
+    <p class="muted">Der Player lädt die Seite selbst. Scroll px/s schiebt sie nach unten, 0 bleibt oben.</p>`;
   }
   const image = mode === "image-url";
   return `<div class="grid-2">

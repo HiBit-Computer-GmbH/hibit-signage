@@ -4,7 +4,7 @@ Digital Signage für Raspberry Pi OS Lite, mit lokaler Webkonsole und optionaler
 
 ## Was abgespielt wird
 
-- Bilder und Videos per HTTP(S)-Adresse
+- Bilder und Videos per HTTP(S)-Adresse. Klappt der Abruf nicht, bleibt der Hinweis stehen und der Player versucht es erneut.
 - Webseiten. Der Player holt sie selbst, auch wenn die Seite Iframes verbietet. Warteschlange, Scroll und Fortschrittsbalken bleiben.
 - Dateien, die in der Webkonsole hochgeladen werden
 - Dateien von SMB- oder NFS-Freigaben
@@ -77,7 +77,7 @@ Websockets bleiben an, sonst verbinden sich die Pis nicht und die Shell in der C
 2. Unter Schlüssel einen Einschreibeschlüssel erzeugen. Optional hängt der Schlüssel schon an einem Mandanten.
 3. Den Player mit `--cloud-url` und `--device-key` installieren, oder die Werte später in der lokalen Konsole unter System eintragen.
 4. Das Gerät erscheint als wartend. Adoptieren vergibt Name und Mandant.
-5. Warteschlange, Uploads, SMB/NFS und die Shell gibt es danach auch in der Cloud. Der Pi holt den Stand und lädt Cloud-Dateien selbst.
+5. Warteschlange, Uploads, SMB/NFS und die Shell gibt es danach auch in der Cloud. Der Pi holt den Stand und lädt Cloud-Dateien selbst. Auf der Geräteseite zeigt die Anzeige, was der Pi gerade darstellt.
 
 Benutzer gibt es in drei Rollen: Cloud-Admin, Mandanten-Admin, Mandanten-Benutzer. Mandanten sehen nur ihre Geräte. Den Update-Schalter für ein Gerät und für die Cloud selbst hat nur der Cloud-Admin.
 

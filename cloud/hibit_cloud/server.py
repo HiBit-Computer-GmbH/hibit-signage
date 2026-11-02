@@ -971,6 +971,30 @@ async def device_update_log(device_id: str, request: Request):
     )
 
 
+@app.get("/api/devices/{device_id}/preview")
+async def device_preview(device_id: str, request: Request):
+    _require_device(request.state.user, device_id, adopted=True)
+    try:
+        result = await hub.request(device_id, {"type": "preview"}, timeout=8)
+    except TimeoutError as exc:
+        raise HTTPException(504, "Das Gerät hat die Anzeige nicht geschickt.") from exc
+    except RuntimeError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    state = result.get("state") if isinstance(result.get("state"), dict) else {}
+    return JSONResponse(
+        {
+            "image": result.get("image") or "",
+            "state": {
+                "phase": state.get("phase") or "",
+                "name": state.get("name") or "",
+                "kind": state.get("kind") or "",
+                "detail": state.get("detail") or "",
+            },
+        },
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 @app.get("/api/system")
 def system_info(request: Request):
     if request.state.user["role"] != "superadmin":

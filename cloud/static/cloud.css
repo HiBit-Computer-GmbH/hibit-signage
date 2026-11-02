@@ -173,6 +173,12 @@ table {
 }
 .panel table { background: transparent; border: 0; border-radius: 0; }
 .pending { border-color: rgba(214, 255, 74, 0.45); }
+.preview {
+  margin-top: 12px; background: #000; border-radius: 14px; overflow: hidden;
+  aspect-ratio: 16 / 9; display: grid; place-items: center; border: 1px solid var(--line);
+}
+.preview img { width: 100%; height: 100%; object-fit: contain; background: #000; }
+.preview .placeholder { margin: 0; padding: 24px; text-align: center; color: var(--muted); }
 @media (max-width: 980px) {
   .shell { grid-template-columns: 1fr; }
   .side { position: static; height: auto; overflow: visible; border-right: 0; border-bottom: 1px solid var(--line); }

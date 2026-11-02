@@ -57,4 +57,6 @@ exec cage -s -- "$CHROME" \
   --overscroll-history-navigation=0 \
   --password-store=basic \
   --ozone-platform=wayland \
+  --remote-debugging-address=127.0.0.1 \
+  --remote-debugging-port=9222 \
   "$URL"

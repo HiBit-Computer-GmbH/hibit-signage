@@ -10,7 +10,7 @@ import urllib.error
 import urllib.request
 import uuid
 
-from hibit_player import db, mounts, power, updater
+from hibit_player import db, mounts, playback, power, screen, updater
 from hibit_player.shell import shells
 from hibit_player.config import media_dir, version
 from hibit_player.network import hostname, local_ips
@@ -171,6 +171,18 @@ class CloudAgent:
             elif kind == "update_log":
                 snap = updater.snapshot()
                 await ws.send(json.dumps({"type": "update_log", "req": msg.get("req"), "log": snap["log"], "state": snap["state"]}))
+            elif kind == "preview":
+                playback.arm_watch()
+                image = await screen.capture_jpeg()
+                if not image:
+                    image = playback.frame_if_fresh()
+                payload = {
+                    "type": "preview",
+                    "req": msg.get("req"),
+                    "image": base64.b64encode(image).decode("ascii") if image else "",
+                    "state": playback.snapshot(),
+                }
+                await ws.send(json.dumps(payload))
             elif kind == "power":
                 try:
                     message = power.launch(str(msg.get("action") or ""))
