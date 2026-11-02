@@ -157,6 +157,45 @@ _BOOTSTRAP = """
     if (url) location.assign(proxied(url));
     return null;
   };
+  if (window.navigation && window.navigation.addEventListener) {
+    window.navigation.addEventListener("navigate", function (event) {
+      const url = event.destination && event.destination.url || "";
+      if (!url || url.indexOf("/player/site/") !== -1 || /^(about:|blob:|data:)/i.test(url)) return;
+      event.preventDefault();
+      if (/adblockwall|adblock[.]html|blockadblock/i.test(url)) return;
+      const next = proxied(url);
+      if (next && next !== location.href) location.replace(next);
+    });
+  }
+  const consentCss = "#onetrust-consent-sdk,#onetrust-banner-sdk,#usercentrics-root,#CybotCookiebotDialog,#CybotCookiebotDialogBodyUnderlay,.cc-window,.cc-banner,#cookie-law-info-bar,.cky-consent-container,.cky-modal,#borlabs-cookie,#BorlabsCookieBox,.brlbs-cmpnt-dialog,#cmplz-cookiebanner-container,.cmplz-cookiebanner,.fc-consent-root,.fc-dialog-overlay,#didomi-host,#didomi-notice,#qc-cmp2-container,.qc-cmp2-container,#cmpbox,#cmpbox2,#cookie-notice,.cookie-notice-container,#moove_gdpr_cookie_info_bar,.sp_message_container,#sp_message_container_id,.rcb-banner,.rcb-dialog,#real-cookie-banner{display:none!important}";
+  function dismissConsent() {
+    if (!document.getElementById("hibit-consent-style") && document.head) {
+      const style = document.createElement("style");
+      style.id = "hibit-consent-style";
+      style.textContent = consentCss;
+      document.head.appendChild(style);
+    }
+    const reject = /ohne einwilligung|alle ablehnen|ablehnen|reject all|decline|nur notwendige|nur essenzielle|nur erforderliche|continue without|deny all/i;
+    const accept = /alle akzeptieren|alles akzeptieren|accept all|zustimmen|einverstanden|allow all/i;
+    const nodes = document.querySelectorAll("button, a, [role='button'], input[type='button'], input[type='submit']");
+    let choice = null;
+    for (const el of nodes) {
+      const text = String(el.innerText || el.value || el.getAttribute("aria-label") || "").replace(/\\s+/g, " ").trim();
+      if (!text || text.length > 80) continue;
+      if (reject.test(text)) { choice = el; break; }
+      if (!choice && accept.test(text)) choice = el;
+    }
+    if (choice) choice.click();
+  }
+  let consentTries = 0;
+  const consentTimer = setInterval(function () {
+    consentTries += 1;
+    try { dismissConsent(); } catch (e) {}
+    if (consentTries > 24) clearInterval(consentTimer);
+  }, 500);
+  document.addEventListener("DOMContentLoaded", function () {
+    try { dismissConsent(); } catch (e) {}
+  });
 })();
 """
 
@@ -267,6 +306,7 @@ def rewrite_html(html: str, page_url: str) -> str:
     )
     real = json.dumps(base).replace("<", "\\u003c")
     script = _BOOTSTRAP.replace("__REAL__", real)
+    html = _keep_referrer(html)
     return f'<script data-hibit-proxy="1">{script}</script>{html}'
 
 
@@ -553,6 +593,20 @@ def _document_base(html: str, page_url: str) -> str:
     if not match:
         return page_url
     return urljoin(page_url, match.group(2).strip())
+
+
+def _keep_referrer(html: str) -> str:
+    html = re.sub(r"""\sreferrerpolicy\s*=\s*(['"]).*?\1""", "", html, flags=re.I)
+    html = re.sub(r"""<meta\b[^>]*\bname\s*=\s*(['"])referrer\1[^>]*>""", "", html, flags=re.I)
+
+    def rel(match: re.Match) -> str:
+        parts = [part for part in match.group(2).split() if part.lower() != "noreferrer"]
+        if not parts:
+            return ""
+        quote = match.group(1)
+        return f" rel={quote}{' '.join(parts)}{quote}"
+
+    return re.sub(r"""\srel\s*=\s*(['"])([^'"]*)\1""", rel, html, flags=re.I)
 
 
 def _rewrite_meta(html: str, base: str) -> str:

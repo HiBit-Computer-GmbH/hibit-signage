@@ -3,4 +3,4 @@ uvicorn>=0.32,<1
 python-multipart>=0.0.12
 websockets>=13,<16
 # Sorgt vor dem Dienstneustart dafür, dass das Update-Skript nicht mit beendet wird.
-../install/updateprep
+install/updateprep

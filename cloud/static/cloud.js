@@ -236,7 +236,10 @@ function deviceHtml() {
   return `<div class="page-head"><div><h1>${esc(device.name)}</h1><p class="muted">${esc(device.tenant_name || "")} · ${statusBadge(device)} · Rev. ${device.state_revision}</p></div></div>
     <section class="card panel">
       <div class="spread"><div><div class="title">Anzeige</div><p class="muted" id="preview-state">Warte auf den Pi</p></div></div>
-      <div class="preview" id="preview-frame"><p class="placeholder">Noch kein Bild. So ist zu sehen, ob der Pi eine Seite, ein Bild oder ein Video wirklich zeigt.</p></div>
+      <div class="preview" id="preview-frame">
+        <button class="ghost preview-full" id="preview-full" type="button">Vollbild</button>
+        <p class="placeholder">Noch kein Bild. So ist zu sehen, ob der Pi eine Seite, ein Bild oder ein Video wirklich zeigt.</p>
+      </div>
     </section>
     <div class="tabs">${tabs.map(([id, label]) => `<a class="${tab === id ? "active" : ""}" href="#/device/${device.id}/${id}">${label}</a>`).join("")}</div>
     ${tab === "media" ? mediaTab() : tab === "shares" ? sharesTab() : tab === "terminal" ? '<section class="term-frame"><div class="term-bar"><span>Shell auf dem Pi</span><span>Strg+C bricht ab</span></div><div id="term"></div></section>' : tab === "settings" ? settingsTab() : queueTab()}`;
@@ -503,6 +506,28 @@ function previewLabel(playback) {
   return "Warte auf den Pi";
 }
 
+function bindPreview() {
+  const button = document.getElementById("preview-full");
+  const frame = document.getElementById("preview-frame");
+  if (!button || !frame || button.dataset.bound) return;
+  button.dataset.bound = "1";
+  button.addEventListener("click", () => {
+    const open = frame.classList.toggle("is-full");
+    button.textContent = open ? "Schließen" : "Vollbild";
+  });
+  if (!window.__previewEscape) {
+    window.__previewEscape = true;
+    document.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape") return;
+      const current = document.getElementById("preview-frame");
+      const toggle = document.getElementById("preview-full");
+      if (!current || !current.classList.contains("is-full")) return;
+      current.classList.remove("is-full");
+      if (toggle) toggle.textContent = "Vollbild";
+    });
+  }
+}
+
 function startPreview() {
   const token = ++previewWatch;
   const id = deviceId();
@@ -518,7 +543,8 @@ function startPreview() {
       if (data.image) {
         let img = document.getElementById("preview-img");
         if (!img) {
-          frame.textContent = "";
+          const placeholder = frame.querySelector(".placeholder");
+          if (placeholder) placeholder.remove();
           img = document.createElement("img");
           img.id = "preview-img";
           img.alt = "Aktuelle Anzeige";
@@ -559,6 +585,7 @@ function bind(current) {
     if (current.tab === "terminal") state.term = window.HiBitTerm.mount(document.getElementById("term"), `/ws/devices/${deviceId()}/shell`);
     if (current.tab === "settings") bindSettings();
     startPreview();
+    bindPreview();
   }
   if (current.name === "tenants") bindTenants();
   if (current.name === "users") bindUsers();

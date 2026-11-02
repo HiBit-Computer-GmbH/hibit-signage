@@ -24,5 +24,9 @@ for unit in hibit-cloud.service hibit-signage.service; do
   fi
 done
 if [[ "$changed" -eq 1 ]]; then
-  systemctl daemon-reload || true
+  if [[ -x /usr/bin/systemctl ]]; then
+    /usr/bin/systemctl daemon-reload || true
+  else
+    systemctl daemon-reload || true
+  fi
 fi
