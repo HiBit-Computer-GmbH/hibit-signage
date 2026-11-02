@@ -35,6 +35,16 @@ def _scroll_speed(value) -> int:
     return speed
 
 
+def _zoom(value) -> int:
+    try:
+        zoom = int(value or 100)
+    except (TypeError, ValueError):
+        return 100
+    if not 100 <= zoom <= 300:
+        return 100
+    return zoom
+
+
 def safe_filename(name: str) -> str:
     base = Path(name or "datei").name.strip() or "datei"
     base = re.sub(r"[\x00-\x1f]", "", base)
@@ -170,6 +180,7 @@ def sanitize_state(data: dict) -> dict:
             "duration_seconds": duration,
             "fit": "contain" if item.get("fit") == "contain" else "cover",
             "scroll_speed": _scroll_speed(item.get("scroll_speed")),
+            "zoom": _zoom(item.get("zoom")),
             "muted": bool(item.get("muted")),
             "enabled": bool(item.get("enabled", True)),
             "sort_order": index,

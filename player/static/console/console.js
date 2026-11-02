@@ -221,8 +221,9 @@ function enqueueFields() {
       <label>Adresse<input name="url" type="url" placeholder="https://example.com" required></label>
       <label>Sekunden<input name="duration_seconds" type="number" min="1" value="60" required></label>
       <label>Scroll px/s<input name="scroll_speed" type="number" min="0" max="4000" value="0"></label>
+      <label>Zoom %<input name="zoom" type="number" min="100" max="300" step="10" value="100"></label>
     </div>
-    <p class="muted">Der Player lädt die Seite selbst. Scroll px/s schiebt sie nach unten, 0 bleibt oben.</p>`;
+    <p class="muted">Der Player lädt die Seite selbst. Scroll px/s schiebt sie nach unten, 0 bleibt oben. Zoom % vergrößert Text und Seite, 100 bleibt original.</p>`;
   }
   const image = mode === "image-url";
   return `<div class="grid-2">
@@ -251,6 +252,7 @@ function queueHtml() {
           ${item.kind === "web" ? "" : `<label class="tool">Darstellung${fitSelect(item)}</label>`}
           <label class="tool">Sekunden<input data-field="duration" data-id="${esc(item.id)}" type="number" min="1" max="86400" placeholder="Ende" value="${item.duration_seconds ?? ""}" title="Sekunden, bei Videos leer = bis zum Ende"></label>
           ${item.kind === "video" ? "" : `<label class="tool">Scroll px/s<input data-field="scroll" data-id="${esc(item.id)}" type="number" min="0" max="4000" value="${item.scroll_speed || 0}" title="Pixel pro Sekunde, 0 bleibt stehen"></label>`}
+          ${item.kind === "web" ? `<label class="tool">Zoom %<input data-field="zoom" data-id="${esc(item.id)}" type="number" min="100" max="300" step="10" value="${item.zoom || 100}" title="100 ist original, höhere Werte vergrößern die Seite"></label>` : ""}
         </div>
         <div class="actions">
           <button class="ghost" data-action="up" data-id="${esc(item.id)}" ${index === 0 ? "disabled" : ""}>Hoch</button>
@@ -453,7 +455,7 @@ function bindQueue() {
     if (mode === "local") {
       body = { origin: "local", file_id: form.file_id.value, duration_seconds: form.duration_seconds.value, fit, scroll_speed: scroll };
     } else if (mode === "web") {
-      body = { origin: "url", kind: "web", name: form.name.value, url: form.url.value, duration_seconds: form.duration_seconds.value, scroll_speed: scroll };
+      body = { origin: "url", kind: "web", name: form.name.value, url: form.url.value, duration_seconds: form.duration_seconds.value, scroll_speed: scroll, zoom: form.zoom ? form.zoom.value : 100 };
     } else {
       body = {
         origin: "url",
@@ -507,6 +509,7 @@ function bindQueue() {
     const input = event.target.closest("[data-field='duration']");
     const fit = event.target.closest("[data-field='fit']");
     const scroll = event.target.closest("[data-field='scroll']");
+    const zoom = event.target.closest("[data-field='zoom']");
     try {
       if (input) {
         await api(`/api/queue/${input.dataset.id}`, { method: "PATCH", body: { duration_seconds: input.value } });
@@ -515,6 +518,10 @@ function bindQueue() {
       if (scroll) {
         await api(`/api/queue/${scroll.dataset.id}`, { method: "PATCH", body: { scroll_speed: scroll.value } });
         toast(Number(scroll.value) > 0 ? "Scrollgeschwindigkeit gespeichert" : "Scroll aus");
+      }
+      if (zoom) {
+        await api(`/api/queue/${zoom.dataset.id}`, { method: "PATCH", body: { zoom: zoom.value } });
+        toast(Number(zoom.value) > 100 ? `Zoom ${zoom.value} % gespeichert` : "Zoom auf Originalgröße");
       }
       if (fit) {
         await api(`/api/queue/${fit.dataset.id}`, { method: "PATCH", body: { fit: fit.value } });

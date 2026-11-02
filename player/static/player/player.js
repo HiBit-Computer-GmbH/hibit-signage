@@ -27,6 +27,7 @@ function resetMotion(node) {
   node.classList.remove("pan");
   node.style.transition = "none";
   node.style.transform = "";
+  node.style.transformOrigin = "";
   node.style.height = "";
   node.style.width = "";
   node.style.objectFit = "";
@@ -185,15 +186,45 @@ function startImagePan(item, ms) {
   });
 }
 
+function zoomFactor(item) {
+  const percent = Number(item && item.zoom) || 100;
+  if (!Number.isFinite(percent)) return 1;
+  return Math.min(3, Math.max(1, percent / 100));
+}
+
+function hideZoomScrollbars(frame) {
+  try {
+    const doc = frame.contentDocument;
+    if (!doc || doc.getElementById("hibit-zoom-style")) return;
+    const style = doc.createElement("style");
+    style.id = "hibit-zoom-style";
+    style.textContent = "html{scrollbar-width:none}::-webkit-scrollbar{width:0;height:0;display:none}";
+    (doc.head || doc.documentElement).appendChild(style);
+  } catch (error) {}
+}
+
 function startWebPan(frame, item, ms) {
   resetMotion(frame);
+  const zoom = zoomFactor(item);
   const speed = Number(item && item.scroll_speed) || 0;
-  if (!speed) return;
-  const view = webClip.clientHeight || window.innerHeight;
-  const distance = Math.min(30000, Math.round(speed * ms / 1000));
+  const viewH = webClip.clientHeight || window.innerHeight;
+  const viewW = webClip.clientWidth || window.innerWidth;
+  const distance = speed ? Math.min(30000, Math.round(speed * ms / 1000)) : 0;
+  if (zoom <= 1 && distance < 2) return;
+  if (zoom > 1) hideZoomScrollbars(frame);
   frame.classList.add("pan");
-  frame.style.height = `${view + distance}px`;
-  slide(frame, distance, ms);
+  frame.style.transformOrigin = "0 0";
+  frame.style.width = `${Math.round(viewW / zoom)}px`;
+  frame.style.height = `${Math.round((viewH + distance) / zoom)}px`;
+  if (distance < 2) {
+    frame.style.transform = `scale(${zoom})`;
+    return;
+  }
+  frame.style.transition = "none";
+  frame.style.transform = `translateY(0) scale(${zoom})`;
+  void frame.offsetWidth;
+  frame.style.transition = `transform ${ms}ms linear`;
+  frame.style.transform = `translateY(-${distance}px) scale(${zoom})`;
 }
 
 function play() {

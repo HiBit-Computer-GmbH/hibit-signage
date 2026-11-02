@@ -134,6 +134,18 @@ def _scroll(value) -> int:
     return number
 
 
+def _zoom(value) -> int:
+    if value is None or value == "":
+        return 100
+    try:
+        number = int(value)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(400, "Der Zoom ist ungültig.") from exc
+    if not 100 <= number <= 300:
+        raise HTTPException(400, "Der Zoom muss zwischen 100 und 300 Prozent liegen.")
+    return number
+
+
 def _playlist() -> dict:
     items = []
     for item in db.list_queue():
@@ -161,6 +173,7 @@ def _playlist() -> dict:
                 "duration_seconds": item.get("duration_seconds"),
                 "fit": item.get("fit") or "cover",
                 "scroll_speed": int(item.get("scroll_speed") or 0),
+                "zoom": int(item.get("zoom") or 100),
                 "muted": bool(item.get("muted")),
                 "remote": item.get("url") if item.get("origin") == "url" and item.get("kind") in {"image", "video"} else "",
             }
@@ -393,6 +406,7 @@ async def queue_add(request: Request):
     else:
         raise HTTPException(400, "Unbekannte Herkunft.")
     item["scroll_speed"] = _scroll(data.get("scroll_speed"))
+    item["zoom"] = _zoom(data.get("zoom"))
     try:
         created = db.insert_queue(item)
     except ValueError as exc:
@@ -416,6 +430,8 @@ async def queue_patch(item_id: str, request: Request):
         fields["fit"] = "contain" if data.get("fit") == "contain" else "cover"
     if "scroll_speed" in data:
         fields["scroll_speed"] = _scroll(data.get("scroll_speed"))
+    if "zoom" in data:
+        fields["zoom"] = _zoom(data.get("zoom"))
     if "muted" in data:
         fields["muted"] = bool(data.get("muted"))
     if "enabled" in data:

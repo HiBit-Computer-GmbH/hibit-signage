@@ -129,6 +129,18 @@ def _scroll(value) -> int:
     return number
 
 
+def _zoom(value) -> int:
+    if value is None or value == "":
+        return 100
+    try:
+        number = int(value)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(400, "Der Zoom ist ungültig.") from exc
+    if not 100 <= number <= 300:
+        raise HTTPException(400, "Der Zoom muss zwischen 100 und 300 Prozent liegen.")
+    return number
+
+
 def _visible(user: dict, device: dict) -> bool:
     if user["role"] == "superadmin":
         return True
@@ -590,6 +602,7 @@ async def device_queue_add(device_id: str, request: Request):
 
     def add(entry: dict) -> None:
         entry["scroll_speed"] = _scroll(data.get("scroll_speed"))
+        entry["zoom"] = _zoom(data.get("zoom"))
 
         def mutator(current: dict) -> None:
             if len(current["queue"]) >= 500:
@@ -693,6 +706,8 @@ async def device_queue_patch(device_id: str, item_id: str, request: Request):
                 item["fit"] = "contain" if data.get("fit") == "contain" else "cover"
             if "scroll_speed" in data:
                 item["scroll_speed"] = _scroll(data.get("scroll_speed"))
+            if "zoom" in data:
+                item["zoom"] = _zoom(data.get("zoom"))
             if "muted" in data:
                 item["muted"] = bool(data.get("muted"))
             if "enabled" in data:
