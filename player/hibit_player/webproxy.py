@@ -79,8 +79,21 @@ _BOOTSTRAP = """
     Object.defineProperty(window, "frameElement", { configurable: true, get: function () { return null; } });
   } catch (e) {}
   try {
-    Object.defineProperty(navigator, "serviceWorker", { configurable: true, get: function () { return undefined; } });
-  } catch (e) {}
+    if (!delete Navigator.prototype.serviceWorker) throw new Error("keep");
+  } catch (e) {
+    const stub = {
+      addEventListener: function () {},
+      removeEventListener: function () {},
+      register: function () { return Promise.reject(new Error("disabled")); },
+      getRegistration: function () { return Promise.resolve(undefined); },
+      getRegistrations: function () { return Promise.resolve([]); },
+      controller: null,
+      ready: Promise.resolve({ active: null, installing: null, waiting: null })
+    };
+    try {
+      Object.defineProperty(navigator, "serviceWorker", { configurable: true, get: function () { return stub; } });
+    } catch (e2) {}
+  }
   if (window.fetch) {
     const orig = window.fetch;
     window.fetch = function (input, init) {
