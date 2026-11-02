@@ -1,6 +1,0 @@
-hibit_update_prep.py
-setup.py
-hibit_update_prep.egg-info/PKG-INFO
-hibit_update_prep.egg-info/SOURCES.txt
-hibit_update_prep.egg-info/dependency_links.txt
-hibit_update_prep.egg-info/top_level.txt
