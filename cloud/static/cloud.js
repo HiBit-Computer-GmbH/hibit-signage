@@ -16,6 +16,9 @@ const state = {
   poweroff: false,
   addMode: "image-url",
   log: "",
+  updateState: "idle",
+  deviceLog: "",
+  deviceUpdateState: "idle",
 };
 
 function esc(value) {
@@ -83,6 +86,61 @@ async function api(path, options = {}) {
     throw new Error(typeof detail === "string" ? detail : "Anfrage fehlgeschlagen");
   }
   return data;
+}
+
+let updateWatch = 0;
+
+function updateStatusText(stateName, live) {
+  if (stateName === "running") return "Update läuft";
+  if (stateName === "failed") return live ? "Update fehlgeschlagen" : "Letztes Update fehlgeschlagen";
+  if (stateName === "done") return live ? "Update abgeschlossen, die Seite wird neu geladen" : "Letztes Update abgeschlossen";
+  return "";
+}
+
+function startUpdateWatch(options) {
+  const token = ++updateWatch;
+  const button = options.buttonId ? document.getElementById(options.buttonId) : null;
+  if (button) button.disabled = true;
+  const started = Date.now();
+  const tick = async () => {
+    if (token !== updateWatch) return;
+    if (options.deviceId && deviceId() !== options.deviceId) return;
+    if (options.page && route().name !== options.page) return;
+    const logEl = document.getElementById(options.logId);
+    if (!logEl) return;
+    if (Date.now() - started > 20 * 60 * 1000) {
+      const stateEl = document.getElementById(options.stateId);
+      if (stateEl) stateEl.textContent = "Das Update dauert ungewöhnlich lange. Der Verlauf steht im Protokoll.";
+      if (button && button.isConnected) button.disabled = false;
+      return;
+    }
+    try {
+      const data = await options.fetchStatus();
+      const currentLog = document.getElementById(options.logId);
+      const currentState = document.getElementById(options.stateId);
+      if (token !== updateWatch || !currentLog) return;
+      currentLog.textContent = data.log || "";
+      currentLog.scrollTop = currentLog.scrollHeight;
+      if (data.state === "failed") {
+        if (currentState) currentState.textContent = updateStatusText("failed", true);
+        if (button && button.isConnected) button.disabled = false;
+        toast("Update fehlgeschlagen", true);
+        return;
+      }
+      if (data.state === "done") {
+        if (currentState) currentState.textContent = updateStatusText("done", true);
+        setTimeout(() => location.reload(), 800);
+        return;
+      }
+      if (currentState) currentState.textContent = updateStatusText("running", true);
+    } catch (error) {
+      if (token !== updateWatch) return;
+      const currentState = document.getElementById(options.stateId);
+      if (currentState) currentState.textContent = options.offlineText;
+    }
+    setTimeout(tick, 1000);
+  };
+  tick();
 }
 
 function route() {
@@ -292,7 +350,9 @@ function settingsTab() {
     </section>`;
   return `${power}<form class="card composer" id="rename-form"><label>Name<input name="name" value="${esc(device.name)}" required></label><button type="submit">Speichern</button></form>
     ${isAdmin() ? `<form class="card composer" id="move-form"><label>Mandant wechseln<select name="tenant_id">${tenantOptions(device.tenant_id)}</select></label><button class="ghost" type="submit">Verschieben</button></form>
-    <section class="card panel"><div class="spread"><div><div class="title">Geräte-Update</div><p class="muted">Der Pi zieht das GitHub-Repository und startet neu.</p></div><button id="device-update" type="button">Update</button></div></section>
+    <section class="card panel"><div class="spread"><div><div class="title">Geräte-Update</div><p class="muted">Der Pi zieht das GitHub-Repository und startet neu. Der Verlauf erscheint hier, danach lädt die Seite neu.</p></div><button id="device-update" type="button">Update</button></div>
+    <p class="muted" id="device-update-state">${esc(updateStatusText(state.deviceUpdateState, false))}</p>
+    <pre class="log" id="device-update-log">${esc(state.deviceLog || "")}</pre></section>
     <section class="card panel"><div class="spread"><div><div class="title">Gerät entfernen</div><p class="muted">Das Gerät verschwindet aus der Cloud. Ein erneuter Adopt ist danach nötig.</p></div><button class="danger" id="forget" type="button">${state.confirm === "forget" ? "Wirklich entfernen" : "Gerät entfernen"}</button></div></section>` : `<p class="muted">Updates startet nur ein Cloud-Admin.</p>`}
     <p class="meta">Hardware ${esc(device.hardware_id)} · zuletzt ${esc(when(device.last_seen))}</p>`;
 }
@@ -336,8 +396,9 @@ function systemHtml() {
   const info = state.system || {};
   return `<div class="page-head"><div><h1>Cloud-System</h1><p class="muted">Version ${esc(info.version || "")} ${info.commit ? "· " + esc(info.commit) : ""}</p></div></div>
     <article class="card stat"><span class="muted">Speicher frei</span><b>${sizeLabel(info.disk_free)}</b></article>
-    <section class="card panel"><div class="spread"><div><div class="title">Cloud aus GitHub updaten</div><p class="muted">Nur für Cloud-Admins. Mandanten sehen diesen Schalter nicht.</p></div><button id="cloud-update" type="button">Update</button></div>
-    <pre class="log">${esc(state.log || "")}</pre></section>
+    <section class="card panel"><div class="spread"><div><div class="title">Cloud aus GitHub updaten</div><p class="muted">Nur für Cloud-Admins. Mandanten sehen diesen Schalter nicht. Der Verlauf erscheint hier, danach lädt die Seite neu.</p></div><button id="cloud-update" type="button">Update</button></div>
+    <p class="muted" id="update-state">${esc(updateStatusText(state.updateState, false))}</p>
+    <pre class="log" id="update-log">${esc(state.log || "")}</pre></section>
     <form class="card composer" id="password-form"><h2>Eigenes Passwort</h2><div class="grid-2"><label>Aktuell<input name="current" type="password" required></label><label>Neu<input name="next" type="password" minlength="8" required></label></div><button type="submit">Ändern</button></form>`;
 }
 
@@ -398,7 +459,16 @@ async function load() {
     state.keys = (await api("/api/keys")).keys;
     state.tenants = (await api("/api/tenants")).tenants;
   }
-  if (current.name === "system") state.system = await api("/api/system");
+  if (current.name === "system") {
+    state.system = await api("/api/system");
+    try {
+      const update = await api("/api/system/update-log", { cache: "no-store" });
+      state.log = update.log || "";
+      state.updateState = update.state || "idle";
+    } catch (error) {
+      state.updateState = "idle";
+    }
+  }
 }
 
 async function show() {
@@ -646,13 +716,21 @@ function bindSettings() {
   if (update) {
     update.addEventListener("click", async () => {
       if (!confirm("Update auf dem Gerät starten?")) return;
+      const stateEl = document.getElementById("device-update-state");
+      update.disabled = true;
+      if (stateEl) stateEl.textContent = "Update wird gestartet";
       try {
         const result = await api(`/api/devices/${deviceId()}/update`, { method: "POST", body: {} });
         toast(result.message || "Update gestartet");
+        state.deviceUpdateState = "running";
+        startUpdateWatch(deviceUpdateOptions());
       } catch (error) {
+        update.disabled = false;
+        if (stateEl) stateEl.textContent = updateStatusText(state.deviceUpdateState, false);
         toast(error.message, true);
       }
     });
+    loadDeviceLog();
   }
   const reboot = document.getElementById("reboot");
   if (reboot) {
@@ -778,21 +856,72 @@ function bindKeys() {
   });
 }
 
+function deviceUpdateOptions() {
+  return {
+    buttonId: "device-update",
+    logId: "device-update-log",
+    stateId: "device-update-state",
+    deviceId: deviceId(),
+    offlineText: "Gerät ist kurz nicht erreichbar und meldet sich nach dem Neustart",
+    fetchStatus: () => api(`/api/devices/${deviceId()}/update-log`, { cache: "no-store" }),
+  };
+}
+
+async function loadDeviceLog() {
+  const id = deviceId();
+  try {
+    const data = await api(`/api/devices/${id}/update-log`, { cache: "no-store" });
+    if (deviceId() !== id) return;
+    const button = document.getElementById("device-update");
+    if (button && button.disabled && data.state !== "running") return;
+    state.deviceLog = data.log || "";
+    state.deviceUpdateState = data.state || "idle";
+    const logEl = document.getElementById("device-update-log");
+    const stateEl = document.getElementById("device-update-state");
+    if (logEl) logEl.textContent = state.deviceLog;
+    if (stateEl && data.state !== "running") stateEl.textContent = updateStatusText(data.state, false);
+    if (data.state === "running") startUpdateWatch(deviceUpdateOptions());
+  } catch (error) {
+    return;
+  }
+}
+
 function bindSystem() {
   const update = document.getElementById("cloud-update");
   if (update) {
     update.addEventListener("click", async () => {
       if (!confirm("Cloud-Konsole aus GitHub updaten und neu starten?")) return;
+      const stateEl = document.getElementById("update-state");
+      update.disabled = true;
+      if (stateEl) stateEl.textContent = "Update wird gestartet";
       try {
         const result = await api("/api/system/update", { method: "POST", body: {} });
         toast(result.message);
-        const data = await api("/api/system/update-log");
-        state.log = data.log;
-        render();
+        state.updateState = "running";
+        startUpdateWatch({
+          buttonId: "cloud-update",
+          logId: "update-log",
+          stateId: "update-state",
+          page: "system",
+          offlineText: "Verbindung unterbrochen, der Dienst startet neu",
+          fetchStatus: () => api("/api/system/update-log", { cache: "no-store" }),
+        });
       } catch (error) {
+        update.disabled = false;
+        if (stateEl) stateEl.textContent = updateStatusText(state.updateState, false);
         toast(error.message, true);
       }
     });
+    if (state.updateState === "running") {
+      startUpdateWatch({
+        buttonId: "cloud-update",
+        logId: "update-log",
+        stateId: "update-state",
+        page: "system",
+        offlineText: "Verbindung unterbrochen, der Dienst startet neu",
+        fetchStatus: () => api("/api/system/update-log", { cache: "no-store" }),
+      });
+    }
   }
   document.getElementById("password-form").addEventListener("submit", async (event) => {
     event.preventDefault();

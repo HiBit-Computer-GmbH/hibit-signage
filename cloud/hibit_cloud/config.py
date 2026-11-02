@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-VERSION_FALLBACK = "1.1.5"
+VERSION_FALLBACK = "1.1.6"
 
 
 def install_dir() -> Path:

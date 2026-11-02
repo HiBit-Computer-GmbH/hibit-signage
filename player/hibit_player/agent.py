@@ -168,6 +168,9 @@ class CloudAgent:
                     await ws.send(json.dumps({"type": "update_started", "req": msg.get("req"), "detail": message}))
                 except Exception as exc:
                     await ws.send(json.dumps({"type": "update_started", "req": msg.get("req"), "detail": str(exc), "ok": False}))
+            elif kind == "update_log":
+                snap = updater.snapshot()
+                await ws.send(json.dumps({"type": "update_log", "req": msg.get("req"), "log": snap["log"], "state": snap["state"]}))
             elif kind == "power":
                 try:
                     message = power.launch(str(msg.get("action") or ""))

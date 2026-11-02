@@ -1,15 +1,35 @@
 #!/bin/bash
 set -euo pipefail
+if [[ -z "${HIBIT_UNBUFFERED:-}" ]] && command -v stdbuf >/dev/null 2>&1; then
+  export HIBIT_UNBUFFERED=1
+  export PYTHONUNBUFFERED=1
+  exec stdbuf -oL -eL /bin/bash "$0" "$@"
+fi
+export PYTHONUNBUFFERED=1
 INSTALL="${HIBIT_INSTALL_DIR:-/opt/hibit-signage}"
-LOG="${HIBIT_DATA_DIR:-/var/lib/hibit-cloud}/update.log"
-mkdir -p "$(dirname "$LOG")"
+DATA="${HIBIT_DATA_DIR:-/var/lib/hibit-cloud}"
+LOG="$DATA/update.log"
+STATUS="$DATA/update.status"
+mkdir -p "$DATA"
 exec >>"$LOG" 2>&1
 echo "=== $(date -Is) Cloud-Update ==="
+finish_fail() {
+  echo "failed" > "$STATUS" || true
+  echo "=== Update fehlgeschlagen ==="
+}
+trap finish_fail ERR
 sleep 1
 cd "$INSTALL"
 export GIT_TERMINAL_PROMPT=0
+echo "Hole das Repository …"
 git -c safe.directory="$INSTALL" fetch origin
+echo "Aktualisiere den Stand …"
 git -c safe.directory="$INSTALL" pull --ff-only
+echo "Installiere Abhängigkeiten …"
 "$INSTALL/.venv/bin/pip" install -r "$INSTALL/cloud/requirements.txt"
+echo "Starte die Cloud neu …"
 systemctl restart hibit-cloud
+trap - ERR
+install -m 755 "$INSTALL/install/hibit-update-cloud" /usr/local/sbin/hibit-update-cloud || true
+echo "done" > "$STATUS"
 echo "=== Cloud-Update fertig ==="

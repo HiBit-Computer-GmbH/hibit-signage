@@ -20,7 +20,7 @@ from urllib.parse import quote, urlparse
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 
-from hibit_player import agent, db, mounts, power, updater
+from hibit_player import agent, db, mounts, power, updater, webproxy
 from hibit_player.shell import shells
 from hibit_player.config import data_dir, install_dir, media_dir, port, version
 from hibit_player.network import hostname, local_ips
@@ -141,6 +141,8 @@ def _playlist() -> dict:
         src = None
         if item["origin"] == "url" and item.get("kind") in {"image", "video"} and item.get("url"):
             src = "/media/remote?u=" + quote(item["url"], safe="")
+        elif item["origin"] == "url" and item.get("kind") == "web" and item.get("url"):
+            src = webproxy.proxy_path(item["url"])
         elif item["origin"] == "url":
             src = item.get("url")
         elif item["origin"] == "local" and item.get("file_id"):
@@ -722,7 +724,7 @@ def system_update():
 
 @app.get("/api/system/update-log")
 def system_update_log():
-    return {"log": updater.read_log()}
+    return JSONResponse(updater.snapshot(), headers={"Cache-Control": "no-store"})
 
 
 @app.post("/api/system/power")
@@ -806,6 +808,38 @@ def player_js():
 @app.get("/player/player.css")
 def player_css():
     return _static(STATIC / "player" / "player.css", "text/css")
+
+
+@app.get("/player/sw.js")
+def player_sw():
+    path = STATIC / "player" / "sw.js"
+    if not path.is_file():
+        raise HTTPException(404, "Datei nicht gefunden")
+    return FileResponse(
+        path,
+        media_type="text/javascript",
+        headers={"Cache-Control": "no-cache", "Service-Worker-Allowed": "/"},
+    )
+
+
+@app.api_route("/player/site/{scheme}/{host}/{path:path}", methods=["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
+async def player_site(scheme: str, host: str, path: str, request: Request):
+    return await webproxy.handle(scheme, host, path, request)
+
+
+@app.api_route("/player/site/{scheme}/{host}", methods=["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
+async def player_site_root(scheme: str, host: str, request: Request):
+    return await webproxy.handle(scheme, host, "", request)
+
+
+@app.websocket("/player/site/{scheme}/{host}/{path:path}")
+async def player_site_ws(ws: WebSocket, scheme: str, host: str, path: str):
+    await webproxy.handle_ws(ws, scheme, host, path)
+
+
+@app.websocket("/player/site/{scheme}/{host}")
+async def player_site_ws_root(ws: WebSocket, scheme: str, host: str):
+    await webproxy.handle_ws(ws, scheme, host, "")
 
 
 @app.get("/console")

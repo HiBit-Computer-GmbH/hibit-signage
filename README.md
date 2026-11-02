@@ -5,6 +5,7 @@ Digital Signage für Raspberry Pi OS Lite, mit lokaler Webkonsole und optionaler
 ## Was abgespielt wird
 
 - Bilder und Videos per HTTP(S)-Adresse
+- Webseiten. Der Player holt sie selbst, auch wenn die Seite Iframes verbietet. Warteschlange, Scroll und Fortschrittsbalken bleiben.
 - Dateien, die in der Webkonsole hochgeladen werden
 - Dateien von SMB- oder NFS-Freigaben
 
@@ -88,7 +89,7 @@ Entfernte Geräte melden sich mit demselben Schlüssel wieder als neues wartende
 - Cloud, Seite System: nur Cloud-Admin, startet die Cloud neu.
 - Cloud, Gerät, Reiter Gerät: nur Cloud-Admin, schickt das Update an den Pi.
 
-Beide Update-Skripte liegen nach der Installation root-geschützt in `/usr/local/sbin` und machen nur Fast-Forward-Pulls.
+Beide Update-Skripte liegen nach der Installation root-geschützt in `/usr/local/sbin` und machen nur Fast-Forward-Pulls. Der Verlauf erscheint live. Wenn das Update durch ist, lädt die Seite neu.
 
 ## Lokal entwickeln
 

@@ -954,6 +954,23 @@ async def device_update(device_id: str, request: Request):
     return {"ok": True, "message": result.get("detail") or "Update gestartet."}
 
 
+@app.get("/api/devices/{device_id}/update-log")
+async def device_update_log(device_id: str, request: Request):
+    if request.state.user["role"] != "superadmin":
+        raise HTTPException(403, "Nur Cloud-Admins dürfen Geräte updaten.")
+    _require_device(request.state.user, device_id, adopted=True)
+    try:
+        result = await hub.request(device_id, {"type": "update_log"}, timeout=10)
+    except TimeoutError as exc:
+        raise HTTPException(504, "Das Gerät hat den Update-Verlauf nicht geschickt.") from exc
+    except RuntimeError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return JSONResponse(
+        {"log": result.get("log") or "", "state": result.get("state") or "idle"},
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 @app.get("/api/system")
 def system_info(request: Request):
     if request.state.user["role"] != "superadmin":
@@ -984,7 +1001,7 @@ def system_update(request: Request):
 def system_update_log(request: Request):
     if request.state.user["role"] != "superadmin":
         raise HTTPException(403, "Nur Cloud-Admins dürfen die Cloud updaten.")
-    return {"log": updater.read_log()}
+    return JSONResponse(updater.snapshot(), headers={"Cache-Control": "no-store"})
 
 
 @app.get("/api/agent/files/{file_id}")

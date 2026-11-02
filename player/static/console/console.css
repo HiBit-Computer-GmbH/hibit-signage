@@ -242,7 +242,8 @@ th { color: var(--faint); font-size: 0.78rem; font-weight: 700; letter-spacing: 
   background: var(--sunken);
   border-radius: 12px;
   padding: 12px;
-  max-height: 240px;
+  min-height: 96px;
+  max-height: 360px;
   overflow: auto;
 }
 

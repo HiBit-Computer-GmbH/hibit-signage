@@ -1,3 +1,7 @@
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("/player/sw.js", { scope: "/" }).catch(() => {});
+}
+
 const imageClip = document.getElementById("image-clip");
 const image = document.getElementById("image");
 const video = document.getElementById("video");

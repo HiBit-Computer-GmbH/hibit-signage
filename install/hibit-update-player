@@ -1,20 +1,37 @@
 #!/bin/bash
 # Wird als root über sudo gestartet. Zieht nur per fast-forward und startet danach neu.
 set -euo pipefail
+if [[ -z "${HIBIT_UNBUFFERED:-}" ]] && command -v stdbuf >/dev/null 2>&1; then
+  export HIBIT_UNBUFFERED=1
+  export PYTHONUNBUFFERED=1
+  exec stdbuf -oL -eL /bin/bash "$0" "$@"
+fi
+export PYTHONUNBUFFERED=1
 INSTALL="${HIBIT_INSTALL_DIR:-/opt/hibit-signage}"
-LOG="${HIBIT_DATA_DIR:-/var/lib/hibit-signage}/update.log"
-mkdir -p "$(dirname "$LOG")"
+DATA="${HIBIT_DATA_DIR:-/var/lib/hibit-signage}"
+LOG="$DATA/update.log"
+STATUS="$DATA/update.status"
+mkdir -p "$DATA"
 exec >>"$LOG" 2>&1
 echo "=== $(date -Is) Player-Update ==="
+finish_fail() {
+  echo "failed" > "$STATUS" || true
+  echo "=== Update fehlgeschlagen ==="
+}
+trap finish_fail ERR
 if passwd -S hibit 2>/dev/null | grep -q ' L '; then
   passwd -u hibit >/dev/null 2>&1 || true
 fi
 sleep 1
 cd "$INSTALL"
 export GIT_TERMINAL_PROMPT=0
+echo "Hole das Repository …"
 git -c safe.directory="$INSTALL" fetch origin
+echo "Aktualisiere den Stand …"
 git -c safe.directory="$INSTALL" pull --ff-only
+echo "Installiere Abhängigkeiten …"
 "$INSTALL/.venv/bin/pip" install -r "$INSTALL/player/requirements.txt"
+echo "Aktualisiere Systemdateien …"
 install -m 755 "$INSTALL/install/hibit-power" /usr/local/sbin/hibit-power
 install -m 755 "$INSTALL/install/hibit-update-player" /usr/local/sbin/hibit-update-player
 python3 "$INSTALL/install/blank-cursor.py" --system || true
@@ -28,6 +45,9 @@ for policy_dir in /etc/chromium/policies/managed /etc/chromium-browser/policies/
   printf '%s\n' '{"TranslateEnabled":false}' > "$policy_dir/hibit-signage.json"
   chmod 644 "$policy_dir/hibit-signage.json"
 done
+echo "Starte den Player neu …"
 systemctl restart hibit-signage
 systemctl try-restart hibit-kiosk || true
+trap - ERR
+echo "done" > "$STATUS"
 echo "=== Player-Update fertig ==="

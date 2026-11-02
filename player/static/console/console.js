@@ -11,6 +11,8 @@ const state = {
   confirm: "",
   poweroff: false,
   addMode: "image-url",
+  log: "",
+  updateState: "idle",
 };
 
 const views = [
@@ -93,6 +95,59 @@ async function api(path, options = {}) {
     throw new Error(typeof detail === "string" ? detail : "Anfrage fehlgeschlagen");
   }
   return data;
+}
+
+let updateWatch = 0;
+
+function updateStatusText(stateName, live) {
+  if (stateName === "running") return "Update läuft";
+  if (stateName === "failed") return live ? "Update fehlgeschlagen" : "Letztes Update fehlgeschlagen";
+  if (stateName === "done") return live ? "Update abgeschlossen, die Seite wird neu geladen" : "Letztes Update abgeschlossen";
+  return "";
+}
+
+function startUpdateWatch(options) {
+  const token = ++updateWatch;
+  const button = options.buttonId ? document.getElementById(options.buttonId) : null;
+  if (button) button.disabled = true;
+  const started = Date.now();
+  const tick = async () => {
+    if (token !== updateWatch) return;
+    const logEl = document.getElementById(options.logId);
+    const stateEl = document.getElementById(options.stateId);
+    if (!logEl) return;
+    if (Date.now() - started > 20 * 60 * 1000) {
+      if (stateEl) stateEl.textContent = "Das Update dauert ungewöhnlich lange. Der Verlauf steht im Protokoll.";
+      if (button && button.isConnected) button.disabled = false;
+      return;
+    }
+    try {
+      const data = await options.fetchStatus();
+      const currentLog = document.getElementById(options.logId);
+      const currentState = document.getElementById(options.stateId);
+      if (token !== updateWatch || !currentLog) return;
+      currentLog.textContent = data.log || "";
+      currentLog.scrollTop = currentLog.scrollHeight;
+      if (data.state === "failed") {
+        if (currentState) currentState.textContent = updateStatusText("failed", true);
+        if (button && button.isConnected) button.disabled = false;
+        toast("Update fehlgeschlagen", true);
+        return;
+      }
+      if (data.state === "done") {
+        if (currentState) currentState.textContent = updateStatusText("done", true);
+        setTimeout(() => location.reload(), 800);
+        return;
+      }
+      if (currentState) currentState.textContent = updateStatusText("running", true);
+    } catch (error) {
+      if (token !== updateWatch) return;
+      const currentState = document.getElementById(options.stateId);
+      if (currentState) currentState.textContent = options.offlineText;
+    }
+    setTimeout(tick, 1000);
+  };
+  tick();
 }
 
 function viewName() {
@@ -307,8 +362,9 @@ function systemHtml() {
       ${state.poweroff ? `<div class="confirm-box"><p>Zweite Bestätigung: der Pi wird jetzt ausgeschaltet.</p><div class="row"><button class="danger" id="poweroff-now" type="button">Wirklich herunterfahren</button><button class="ghost" id="poweroff-cancel" type="button">Abbrechen</button></div></div>` : ""}
     </section>
     <section class="card panel">
-      <div><div class="title">Update aus GitHub</div><p class="muted">Zieht den aktuellen Stand und startet den Player neu.</p></div>
+      <div><div class="title">Update aus GitHub</div><p class="muted">Zieht den aktuellen Stand und startet den Player neu. Der Verlauf erscheint hier, danach lädt die Seite neu.</p></div>
       <div class="actions"><button id="update" type="button">Update</button><button class="ghost" id="restart-display" type="button">Anzeige neu starten</button></div>
+      <p class="muted" id="update-state">${esc(updateStatusText(state.updateState, false))}</p>
       <pre class="log" id="update-log">${esc(state.log || "")}</pre>
     </section>`;
 }
@@ -357,7 +413,16 @@ async function load() {
   if (current === "queue") state.queue = (await api("/api/queue")).items;
   if (current === "media") state.files = (await api("/api/media")).files;
   if (current === "shares") state.shares = (await api("/api/shares")).shares;
-  if (current === "system") state.system = await api("/api/system");
+  if (current === "system") {
+    state.system = await api("/api/system");
+    try {
+      const update = await api("/api/system/update-log", { cache: "no-store" });
+      state.log = update.log || "";
+      state.updateState = update.state || "idle";
+    } catch (error) {
+      state.updateState = "idle";
+    }
+  }
 }
 
 async function show() {
@@ -611,11 +676,24 @@ function bindSystem() {
   });
   document.getElementById("update").addEventListener("click", async () => {
     if (!confirm("Update aus dem Git-Repository starten und den Player neu starten?")) return;
+    const button = document.getElementById("update");
+    const stateEl = document.getElementById("update-state");
+    button.disabled = true;
+    if (stateEl) stateEl.textContent = "Update wird gestartet";
     try {
       const result = await api("/api/system/update", { method: "POST", body: {} });
       toast(result.message);
-      pollLog();
+      state.updateState = "running";
+      startUpdateWatch({
+        buttonId: "update",
+        logId: "update-log",
+        stateId: "update-state",
+        offlineText: "Verbindung unterbrochen, der Dienst startet neu",
+        fetchStatus: () => api("/api/system/update-log", { cache: "no-store" }),
+      });
     } catch (error) {
+      button.disabled = false;
+      if (stateEl) stateEl.textContent = updateStatusText(state.updateState, false);
       toast(error.message, true);
     }
   });
@@ -658,18 +736,14 @@ function bindSystem() {
       render();
     });
   }
-}
-
-async function pollLog() {
-  for (let attempt = 0; attempt < 8; attempt += 1) {
-    await new Promise((resolve) => setTimeout(resolve, 1500));
-    try {
-      const data = await api("/api/system/update-log");
-      const el = document.getElementById("update-log");
-      if (el) el.textContent = data.log || "";
-    } catch (error) {
-      break;
-    }
+  if (state.updateState === "running") {
+    startUpdateWatch({
+      buttonId: "update",
+      logId: "update-log",
+      stateId: "update-state",
+      offlineText: "Verbindung unterbrochen, der Dienst startet neu",
+      fetchStatus: () => api("/api/system/update-log", { cache: "no-store" }),
+    });
   }
 }
 
