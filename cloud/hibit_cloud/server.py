@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import logging
 import mimetypes
@@ -127,6 +128,20 @@ def _scroll(value) -> int:
     if not 0 <= number <= 4000:
         raise HTTPException(400, "Die Scrollgeschwindigkeit muss zwischen 0 und 4000 Pixeln pro Sekunde liegen.")
     return number
+
+
+def _color_scheme(value) -> str:
+    scheme = str(value or "auto").strip().lower()
+    if scheme in {"light", "dark", "auto"}:
+        return scheme
+    raise HTTPException(400, "Das Farbschema muss automatisch, hell oder dunkel sein.")
+
+
+def _url(value) -> str:
+    url = str(value or "").strip()
+    if not url.startswith(("http://", "https://")) or len(url) > 2000:
+        raise HTTPException(400, "Die Adresse muss mit http:// oder https:// beginnen.")
+    return url
 
 
 def _zoom(value) -> int:
@@ -603,6 +618,7 @@ async def device_queue_add(device_id: str, request: Request):
     def add(entry: dict) -> None:
         entry["scroll_speed"] = _scroll(data.get("scroll_speed"))
         entry["zoom"] = _zoom(data.get("zoom"))
+        entry["color_scheme"] = _color_scheme(data.get("color_scheme"))
 
         def mutator(current: dict) -> None:
             if len(current["queue"]) >= 500:
@@ -708,6 +724,12 @@ async def device_queue_patch(device_id: str, item_id: str, request: Request):
                 item["scroll_speed"] = _scroll(data.get("scroll_speed"))
             if "zoom" in data:
                 item["zoom"] = _zoom(data.get("zoom"))
+            if "color_scheme" in data:
+                item["color_scheme"] = _color_scheme(data.get("color_scheme"))
+            if "url" in data:
+                if item.get("origin") != "url":
+                    raise HTTPException(400, "Dieser Eintrag hat keine Adresse.")
+                item["url"] = _url(data.get("url"))
             if "muted" in data:
                 item["muted"] = bool(data.get("muted"))
             if "enabled" in data:
@@ -931,6 +953,45 @@ async def device_share_browse(device_id: str, share_id: str, request: Request, p
     if result.get("error"):
         raise HTTPException(400, result["error"])
     return result
+
+
+@app.post("/api/devices/{device_id}/boot-logo")
+async def device_boot_logo(device_id: str, request: Request):
+    _require_device(request.state.user, device_id, adopted=True)
+    form = await request.form()
+    upload = form.get("file")
+    if upload is None or not hasattr(upload, "read"):
+        raise HTTPException(400, "Keine Datei erhalten.")
+    data = await upload.read()
+    if len(data) < 32 or len(data) > 1_500_000 or not data.startswith(b"\x89PNG\r\n\x1a\n"):
+        raise HTTPException(400, "Bitte ein PNG, höchstens 1,5 MB.")
+    try:
+        result = await hub.request(
+            device_id,
+            {"type": "boot_logo", "image": base64.b64encode(data).decode("ascii")},
+            timeout=180,
+        )
+    except TimeoutError as exc:
+        raise HTTPException(504, "Das Gerät hat nicht rechtzeitig geantwortet.") from exc
+    except RuntimeError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    if result.get("ok") is False:
+        raise HTTPException(400, result.get("detail") or "Das Logo konnte nicht gespeichert werden.")
+    return {"ok": True, "message": result.get("detail") or "Logo gespeichert."}
+
+
+@app.delete("/api/devices/{device_id}/boot-logo")
+async def device_boot_logo_clear(device_id: str, request: Request):
+    _require_device(request.state.user, device_id, adopted=True)
+    try:
+        result = await hub.request(device_id, {"type": "boot_logo", "image": ""}, timeout=180)
+    except TimeoutError as exc:
+        raise HTTPException(504, "Das Gerät hat nicht rechtzeitig geantwortet.") from exc
+    except RuntimeError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    if result.get("ok") is False:
+        raise HTTPException(400, result.get("detail") or "Das Standardlogo konnte nicht gesetzt werden.")
+    return {"ok": True, "message": result.get("detail") or "Standardlogo wiederhergestellt."}
 
 
 @app.post("/api/devices/{device_id}/power")

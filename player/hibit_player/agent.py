@@ -10,7 +10,7 @@ import urllib.error
 import urllib.request
 import uuid
 
-from hibit_player import db, mounts, playback, power, screen, updater
+from hibit_player import db, mounts, playback, power, screen, splash, updater
 from hibit_player.shell import shells
 from hibit_player.config import media_dir, version
 from hibit_player.network import hostname, local_ips
@@ -183,6 +183,17 @@ class CloudAgent:
                     "state": playback.snapshot(),
                 }
                 await ws.send(json.dumps(payload))
+            elif kind == "boot_logo":
+                try:
+                    raw = base64.b64decode(msg.get("image") or "", validate=False)
+                    if raw:
+                        splash.save_logo(raw)
+                    else:
+                        splash.clear_logo()
+                    message = await asyncio.to_thread(splash.apply)
+                    await ws.send(json.dumps({"type": "boot_logo_done", "req": msg.get("req"), "ok": True, "detail": message}))
+                except Exception as exc:
+                    await ws.send(json.dumps({"type": "boot_logo_done", "req": msg.get("req"), "ok": False, "detail": str(exc)}))
             elif kind == "power":
                 try:
                     message = power.launch(str(msg.get("action") or ""))

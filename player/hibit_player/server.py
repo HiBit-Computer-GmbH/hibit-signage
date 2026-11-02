@@ -21,7 +21,7 @@ from urllib.parse import quote, urlparse
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 
-from hibit_player import agent, db, mounts, playback, power, updater, webproxy
+from hibit_player import agent, db, mounts, playback, power, splash, updater, webproxy
 from hibit_player.shell import shells
 from hibit_player.config import data_dir, install_dir, media_dir, port, version
 from hibit_player.network import hostname, local_ips
@@ -134,6 +134,22 @@ def _scroll(value) -> int:
     return number
 
 
+def _color_scheme(value) -> str:
+    scheme = str(value or "auto").strip().lower()
+    if scheme in {"light", "dark", "auto"}:
+        return scheme
+    raise HTTPException(400, "Das Farbschema muss automatisch, hell oder dunkel sein.")
+
+
+def _url(value, kind: str) -> str:
+    url = str(value or "").strip()
+    if not url.startswith(("http://", "https://")) or len(url) > 2000:
+        raise HTTPException(400, "Die Adresse muss mit http:// oder https:// beginnen.")
+    if kind == "web":
+        return url
+    return url
+
+
 def _zoom(value) -> int:
     if value is None or value == "":
         return 100
@@ -174,6 +190,7 @@ def _playlist() -> dict:
                 "fit": item.get("fit") or "cover",
                 "scroll_speed": int(item.get("scroll_speed") or 0),
                 "zoom": int(item.get("zoom") or 100),
+                "color_scheme": item.get("color_scheme") if item.get("color_scheme") in {"light", "dark"} else "auto",
                 "muted": bool(item.get("muted")),
                 "remote": item.get("url") if item.get("origin") == "url" and item.get("kind") in {"image", "video"} else "",
             }
@@ -407,6 +424,7 @@ async def queue_add(request: Request):
         raise HTTPException(400, "Unbekannte Herkunft.")
     item["scroll_speed"] = _scroll(data.get("scroll_speed"))
     item["zoom"] = _zoom(data.get("zoom"))
+    item["color_scheme"] = _color_scheme(data.get("color_scheme"))
     try:
         created = db.insert_queue(item)
     except ValueError as exc:
@@ -432,6 +450,12 @@ async def queue_patch(item_id: str, request: Request):
         fields["scroll_speed"] = _scroll(data.get("scroll_speed"))
     if "zoom" in data:
         fields["zoom"] = _zoom(data.get("zoom"))
+    if "color_scheme" in data:
+        fields["color_scheme"] = _color_scheme(data.get("color_scheme"))
+    if "url" in data:
+        if current["origin"] != "url":
+            raise HTTPException(400, "Dieser Eintrag hat keine Adresse.")
+        fields["url"] = _url(data.get("url"), current["kind"])
     if "muted" in data:
         fields["muted"] = bool(data.get("muted"))
     if "enabled" in data:
@@ -827,7 +851,35 @@ def system_info():
         "disk_total": usage.total,
         "cloud": cloud,
         "update_ready": updater.script_path().exists(),
+        "boot_logo": splash.has_custom_logo(),
     }
+
+
+@app.post("/api/system/boot-logo")
+async def system_boot_logo(request: Request):
+    form = await request.form()
+    upload = form.get("file")
+    if upload is None or not hasattr(upload, "read"):
+        raise HTTPException(400, "Keine Datei erhalten.")
+    data = await upload.read()
+    try:
+        splash.save_logo(data)
+        message = await asyncio.to_thread(splash.apply)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except (RuntimeError, subprocess.TimeoutExpired) as exc:
+        raise HTTPException(500, str(exc)) from exc
+    return {"ok": True, "message": message}
+
+
+@app.delete("/api/system/boot-logo")
+async def system_boot_logo_clear():
+    splash.clear_logo()
+    try:
+        message = await asyncio.to_thread(splash.apply)
+    except (RuntimeError, subprocess.TimeoutExpired) as exc:
+        raise HTTPException(500, str(exc)) from exc
+    return {"ok": True, "message": message}
 
 
 @app.post("/api/system/cloud")

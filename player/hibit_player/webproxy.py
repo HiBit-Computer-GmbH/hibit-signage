@@ -7,6 +7,7 @@ Warteschlange ändern sich dadurch nicht. Nur Webseiten gehen über diesen Weg.
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import gzip
 import json
 import logging
@@ -36,6 +37,8 @@ _JAR_LOCK = threading.Lock()
 _EXTRA: dict[str, float] = {}
 _HOSTS: tuple[float, set[str]] = (0.0, set())
 _HOSTS_LOCK = threading.Lock()
+_COLOR: contextvars.ContextVar[str] = contextvars.ContextVar("hibit_color", default="")
+_COLOR_QUERY = re.compile(r"prefers-color-scheme\s*:\s*(dark|light)", re.I)
 _REWRITE_LIMIT = 8 * 1024 * 1024
 _BODY_LIMIT = 32 * 1024 * 1024
 _PASS_HEADERS = {
@@ -52,6 +55,19 @@ _BOOTSTRAP = """
 (function () {
   const REAL = __REAL__;
   const ORIGIN = location.origin;
+  const FORCE = __SCHEME__;
+  function withScheme(value) {
+    if (FORCE !== "dark" && FORCE !== "light") return value;
+    try {
+      const parsed = new URL(value, ORIGIN);
+      if (parsed.origin !== ORIGIN || parsed.pathname.indexOf("/player/site/") !== 0) return value;
+      if (parsed.searchParams.get("__hibit_scheme") === FORCE) return value;
+      parsed.searchParams.set("__hibit_scheme", FORCE);
+      return parsed.pathname + parsed.search + parsed.hash;
+    } catch (e) {
+      return value;
+    }
+  }
   function already(value) {
     try {
       const parsed = new URL(value, ORIGIN);
@@ -64,14 +80,14 @@ _BOOTSTRAP = """
     if (value == null) return value;
     const raw = String(value);
     if (!raw || /^(data:|blob:|javascript:|mailto:|tel:|about:|#)/i.test(raw)) return raw;
-    if (already(raw)) return raw;
+    if (already(raw)) return withScheme(raw);
     let abs;
     try { abs = new URL(raw, REAL); } catch (e) { return raw; }
     const scheme = abs.protocol.replace(":", "");
     if (scheme !== "http" && scheme !== "https" && scheme !== "ws" && scheme !== "wss") return raw;
     const path = abs.pathname.split("/").filter(Boolean).join("/");
     const base = scheme === "ws" || scheme === "wss" ? ORIGIN.replace(/^http/, "ws") : ORIGIN;
-    return base + "/player/site/" + scheme + "/" + abs.host + "/" + path + abs.search + abs.hash;
+    return withScheme(base + "/player/site/" + scheme + "/" + abs.host + "/" + path + abs.search + abs.hash);
   }
   try {
     Object.defineProperty(window, "top", { configurable: true, get: function () { return window; } });
@@ -173,11 +189,67 @@ _BOOTSTRAP = """
   if (window.navigation && window.navigation.addEventListener) {
     window.navigation.addEventListener("navigate", function (event) {
       const url = event.destination && event.destination.url || "";
-      if (!url || url.indexOf("/player/site/") !== -1 || /^(about:|blob:|data:)/i.test(url)) return;
+      if (!url || /^(about:|blob:|data:)/i.test(url)) return;
+      if (url.indexOf("/player/site/") !== -1) {
+        const kept = withScheme(url);
+        if (kept !== url) {
+          event.preventDefault();
+          location.replace(kept);
+        }
+        return;
+      }
       event.preventDefault();
       if (/adblockwall|adblock[.]html|blockadblock/i.test(url)) return;
       const next = proxied(url);
       if (next && next !== location.href) location.replace(next);
+    });
+  }
+  if (FORCE === "dark" || FORCE === "light") {
+    const wanted = FORCE === "dark" ? /prefers-color-scheme\\s*:\\s*dark/ig : /prefers-color-scheme\\s*:\\s*light/ig;
+    const other = FORCE === "dark" ? /prefers-color-scheme\\s*:\\s*light/ig : /prefers-color-scheme\\s*:\\s*dark/ig;
+    function paint(text) {
+      return String(text).replace(wanted, "min-width: 0px").replace(other, "prefers-color-scheme: __hibit_off__");
+    }
+    const nativeMatch = window.matchMedia.bind(window);
+    window.matchMedia = function (query) {
+      const raw = String(query || "");
+      const flat = raw.toLowerCase().replace(/\\s+/g, "");
+      if (flat.indexOf("prefers-color-scheme") === -1) return nativeMatch(raw);
+      const wantsDark = flat.indexOf("prefers-color-scheme:dark") !== -1;
+      const wantsLight = flat.indexOf("prefers-color-scheme:light") !== -1;
+      let matches;
+      if (wantsDark && !wantsLight) matches = FORCE === "dark";
+      else if (wantsLight && !wantsDark) matches = FORCE === "light";
+      else matches = nativeMatch(raw).matches;
+      if (/^\\s*not\\b/i.test(raw)) matches = !matches;
+      const list = nativeMatch(matches ? "(min-width: 0px)" : "(max-width: 0px)");
+      try { Object.defineProperty(list, "media", { configurable: true, get: function () { return raw; } }); } catch (e) {}
+      return list;
+    };
+    const insertRule = CSSStyleSheet.prototype.insertRule;
+    CSSStyleSheet.prototype.insertRule = function (rule, index) {
+      if (arguments.length > 1) return insertRule.call(this, paint(rule), index);
+      return insertRule.call(this, paint(rule));
+    };
+    if (CSSStyleSheet.prototype.replaceSync) {
+      const replaceSync = CSSStyleSheet.prototype.replaceSync;
+      CSSStyleSheet.prototype.replaceSync = function (text) { return replaceSync.call(this, paint(text)); };
+    }
+    const watch = new MutationObserver(function (records) {
+      for (const record of records) {
+        for (const node of record.addedNodes) {
+          if (!node || node.nodeType !== 1 || node.tagName !== "STYLE" || node.dataset.hibitPainted) continue;
+          const next = paint(node.textContent || "");
+          if (next !== node.textContent) {
+            node.dataset.hibitPainted = "1";
+            node.textContent = next;
+          }
+        }
+      }
+    });
+    watch.observe(document.documentElement || document, { childList: true, subtree: true });
+    document.addEventListener("DOMContentLoaded", function () {
+      try { document.documentElement.style.colorScheme = FORCE; } catch (e) {}
     });
   }
   const consentCss = "#onetrust-consent-sdk,#onetrust-banner-sdk,#usercentrics-root,#CybotCookiebotDialog,#CybotCookiebotDialogBodyUnderlay,.cc-window,.cc-banner,#cookie-law-info-bar,.cky-consent-container,.cky-modal,#borlabs-cookie,#BorlabsCookieBox,.brlbs-cmpnt-dialog,#cmplz-cookiebanner-container,.cmplz-cookiebanner,.fc-consent-root,.fc-dialog-overlay,#didomi-host,#didomi-notice,#qc-cmp2-container,.qc-cmp2-container,#cmpbox,#cmpbox2,#cookie-notice,.cookie-notice-container,#moove_gdpr_cookie_info_bar,.sp_message_container,#sp_message_container_id,.rcb-banner,.rcb-dialog,#real-cookie-banner{display:none!important}";
@@ -258,7 +330,7 @@ def proxy_path(url: str) -> str | None:
     path = quote(unquote(parsed.path.lstrip("/")), safe="/:@!$&'()*+,;=~")
     query = f"?{parsed.query}" if parsed.query else ""
     frag = f"#{parsed.fragment}" if parsed.fragment else ""
-    return f"/player/site/{parsed.scheme}/{parsed.netloc}/{path}{query}{frag}"
+    return _with_scheme(f"/player/site/{parsed.scheme}/{parsed.netloc}/{path}{query}{frag}", _COLOR.get())
 
 
 def reject_target(url: str) -> str | None:
@@ -301,7 +373,43 @@ def rewrite_css(text: str, base: str) -> str:
         text,
         flags=re.I,
     )
-    return text
+    return force_color_scheme(text, _COLOR.get())
+
+
+def force_color_scheme(text: str, scheme: str) -> str:
+    if scheme not in {"dark", "light"}:
+        return text
+
+    def repl(match: re.Match) -> str:
+        if match.group(1).lower() == scheme:
+            return "min-width: 0px"
+        return "prefers-color-scheme: __hibit_off__"
+
+    return _COLOR_QUERY.sub(repl, text)
+
+
+def _with_scheme(url: str, scheme: str) -> str:
+    if scheme not in {"dark", "light"} or "__hibit_scheme=" in url:
+        return url
+    base, sep, frag = url.partition("#")
+    join = "&" if "?" in base else "?"
+    return f"{base}{join}__hibit_scheme={scheme}" + (f"#{frag}" if sep else "")
+
+
+def _split_query(query: str) -> tuple[str, str]:
+    kept = []
+    color = ""
+    for bit in (query or "").split("&"):
+        if not bit:
+            continue
+        name, _sep, value = bit.partition("=")
+        if name == "__hibit_scheme":
+            raw = unquote(value)
+            if raw in {"dark", "light"} and not color:
+                color = raw
+            continue
+        kept.append(bit)
+    return "&".join(kept), color
 
 
 def rewrite_html(html: str, page_url: str) -> str:
@@ -318,7 +426,7 @@ def rewrite_html(html: str, page_url: str) -> str:
         flags=re.I | re.S,
     )
     real = json.dumps(base).replace("<", "\\u003c")
-    script = _BOOTSTRAP.replace("__REAL__", real)
+    script = _BOOTSTRAP.replace("__REAL__", real).replace("__SCHEME__", json.dumps(_COLOR.get() if _COLOR.get() in {"dark", "light"} else ""))
     html = _keep_referrer(html)
     return f'<script data-hibit-proxy="1">{script}</script>{html}'
 
@@ -350,31 +458,36 @@ def authorize(target: str, referer: str | None, *, follow: bool = False) -> str 
 
 
 async def handle(scheme: str, host: str, path: str, request: Request) -> Response:
+    query, color = _split_query(request.url.query)
+    token = _COLOR.set(color)
     try:
-        target = build_upstream(scheme, host, path, request.url.query)
-    except ValueError:
-        return _plain("Die Adresse ist ungültig.", 400)
-    if scheme not in {"http", "https"}:
-        return _plain("Die Adresse ist ungültig.", 400)
-    reason = authorize(target, request.headers.get("referer"))
-    if reason:
-        return _plain(reason, 403)
-    body = await request.body()
-    if len(body) > _BODY_LIMIT:
-        return _plain("Die Anfrage ist zu groß.", 413)
-    headers = {key.lower(): value for key, value in request.headers.items()}
-    try:
-        return await asyncio.to_thread(_fetch, request.method.upper(), target, headers, body)
-    except Exception:
-        log.warning("Webseite nicht erreichbar: %s", urlparse(target).netloc)
-        return _plain("Die Seite ist nicht erreichbar.", 502)
+        try:
+            target = build_upstream(scheme, host, path, query)
+        except ValueError:
+            return _plain("Die Adresse ist ungültig.", 400)
+        if scheme not in {"http", "https"}:
+            return _plain("Die Adresse ist ungültig.", 400)
+        reason = authorize(target, request.headers.get("referer"))
+        if reason:
+            return _plain(reason, 403)
+        body = await request.body()
+        if len(body) > _BODY_LIMIT:
+            return _plain("Die Anfrage ist zu groß.", 413)
+        headers = {key.lower(): value for key, value in request.headers.items()}
+        try:
+            return await asyncio.to_thread(_fetch, request.method.upper(), target, headers, body)
+        except Exception:
+            log.warning("Webseite nicht erreichbar: %s", urlparse(target).netloc)
+            return _plain("Die Seite ist nicht erreichbar.", 502)
+    finally:
+        _COLOR.reset(token)
 
 
 async def handle_ws(ws: WebSocket, scheme: str, host: str, path: str) -> None:
     if scheme not in {"ws", "wss"}:
         await ws.close(code=1008)
         return
-    query = ws.scope.get("query_string", b"").decode("latin1")
+    query, _color = _split_query(ws.scope.get("query_string", b"").decode("latin1"))
     http_scheme = "https" if scheme == "wss" else "http"
     try:
         target = build_upstream(http_scheme, host, path, query)
@@ -498,8 +611,9 @@ def referer_to_upstream(referer: str) -> str | None:
         return None
     rest = "/".join(parts[5:])
     url = f"{scheme}://{host}/{rest}"
-    if parsed.query:
-        url = f"{url}?{parsed.query}"
+    query, _color = _split_query(parsed.query)
+    if query:
+        url = f"{url}?{query}"
     return url
 
 

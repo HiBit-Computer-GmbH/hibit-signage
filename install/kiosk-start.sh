@@ -36,6 +36,9 @@ fi
 ) &
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if command -v plymouth >/dev/null 2>&1; then
+  plymouth quit || true
+fi
 sudo -n /usr/local/sbin/hibit-power hide-cursor || python3 "$SCRIPT_DIR/blank-cursor.py" --system || true
 unset XCURSOR_THEME || true
 unset XCURSOR_PATH || true

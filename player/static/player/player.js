@@ -186,6 +186,14 @@ function startImagePan(item, ms) {
   });
 }
 
+function webSrc(item) {
+  const src = item && item.src || "";
+  const scheme = item && item.color_scheme;
+  if (!src || (scheme !== "dark" && scheme !== "light")) return src;
+  if (src.includes("__hibit_scheme=")) return src;
+  return src + (src.includes("?") ? "&" : "?") + "__hibit_scheme=" + scheme;
+}
+
 function zoomFactor(item) {
   const percent = Number(item && item.zoom) || 100;
   if (!Number.isFinite(percent)) return 1;
@@ -293,7 +301,7 @@ function play() {
     frame.removeAttribute("src");
     requestAnimationFrame(() => {
       if (token !== generation) return;
-      frame.src = item.src;
+      frame.src = webSrc(item);
     });
     return;
   }

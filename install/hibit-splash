@@ -1,0 +1,130 @@
+#!/bin/bash
+# Richtet den Boot-Splash mit dem HiBit-Logo oder einem eigenen PNG ein.
+# Als root: hibit-splash
+set -euo pipefail
+if [[ "$(id -u)" -ne 0 ]]; then
+  echo "Bitte als root ausführen." >&2
+  exit 1
+fi
+if [[ -f /etc/hibit/player.env ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source /etc/hibit/player.env
+  set +a
+fi
+INSTALL="${HIBIT_INSTALL_DIR:-/opt/hibit-signage}"
+DATA="${HIBIT_DATA_DIR:-/var/lib/hibit-signage}"
+if [[ -f "$DATA/boot-logo.png" ]]; then
+  LOGO_SRC="$DATA/boot-logo.png"
+else
+  LOGO_SRC="$INSTALL/install/splash/logo.png"
+fi
+if [[ ! -f "$LOGO_SRC" ]]; then
+  echo "Kein Logo gefunden." >&2
+  exit 1
+fi
+if ! command -v plymouth >/dev/null 2>&1; then
+  if ! command -v apt-get >/dev/null 2>&1; then
+    echo "Plymouth gibt es auf diesem System nicht." >&2
+    exit 1
+  fi
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update
+  apt-get install -y plymouth
+fi
+if ! python3 -c 'import PIL' >/dev/null 2>&1 && command -v apt-get >/dev/null 2>&1; then
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get install -y python3-pil || true
+fi
+THEME="/usr/share/plymouth/themes/hibit-signage"
+mkdir -p "$THEME" "$DATA"
+NEW_HASH="$(sha256sum "$LOGO_SRC" | awk '{print $1}')"
+SKIP_THEME=0
+if [[ -f "$DATA/boot-logo.sha" && "$(cat "$DATA/boot-logo.sha")" == "$NEW_HASH" && -f "$THEME/hibit.script" && -f "$THEME/logo.png" ]]; then
+  SKIP_THEME=1
+fi
+if [[ "$SKIP_THEME" -eq 0 ]]; then
+python3 - "$LOGO_SRC" "$THEME/logo.png" << 'PY'
+import shutil
+import sys
+src, dest = sys.argv[1], sys.argv[2]
+try:
+    from PIL import Image
+except ImportError:
+    shutil.copyfile(src, dest)
+    raise SystemExit(0)
+image = Image.open(src).convert("RGBA")
+limit = 1100
+if image.width > limit:
+    height = max(1, round(image.height * limit / image.width))
+    resample = getattr(getattr(Image, "Resampling", Image), "LANCZOS")
+    image = image.resize((limit, height), resample)
+image.save(dest, "PNG")
+PY
+cat > "$THEME/hibit.plymouth" << 'EOF'
+[Plymouth Theme]
+Name=HiBit Signage
+Description=HiBit Signage
+ModuleName=script
+
+[script]
+ImageDir=/usr/share/plymouth/themes/hibit-signage
+ScriptFile=/usr/share/plymouth/themes/hibit-signage/hibit.script
+EOF
+cat > "$THEME/hibit.script" << 'EOF'
+Window.SetBackgroundTopColor(0.063, 0.075, 0.055);
+Window.SetBackgroundBottomColor(0.063, 0.075, 0.055);
+
+logo.image = Image("logo.png");
+max_w = Window.GetWidth() * 0.46;
+max_h = Window.GetHeight() * 0.30;
+scale = max_w / logo.image.GetWidth();
+height_scale = max_h / logo.image.GetHeight();
+if (height_scale < scale) scale = height_scale;
+if (scale > 2.4) scale = 2.4;
+logo.image = logo.image.Scale(logo.image.GetWidth() * scale, logo.image.GetHeight() * scale);
+logo.sprite = Sprite(logo.image);
+
+fun center () {
+  logo.sprite.SetX(Window.GetWidth() / 2 - logo.image.GetWidth() / 2);
+  logo.sprite.SetY(Window.GetHeight() / 2 - logo.image.GetHeight() / 2);
+}
+center();
+Plymouth.SetRefreshFunction(center);
+EOF
+if ! plymouth-set-default-theme -R hibit-signage; then
+  plymouth-set-default-theme hibit-signage
+  update-initramfs -u
+fi
+fi
+ensure_line() {
+  local file="$1"
+  [[ -f "$file" ]] || return 0
+  local line
+  line="$(tr -d '\n' < "$file")"
+  line="${line// nosplash/}"
+  line="${line//nosplash /}"
+  local token
+  for token in quiet splash plymouth.ignore-serial-consoles logo.nologo vt.global_cursor_default=0; do
+    if [[ " $line " != *" $token "* ]]; then
+      line="$line $token"
+    fi
+  done
+  printf '%s\n' "$line" > "$file"
+}
+ensure_line /boot/firmware/cmdline.txt
+ensure_line /boot/cmdline.txt
+ensure_config() {
+  local file="$1"
+  [[ -f "$file" ]] || return 0
+  if grep -q '^disable_splash=' "$file"; then
+    sed -i 's/^disable_splash=.*/disable_splash=1/' "$file"
+  else
+    printf '\ndisable_splash=1\n' >> "$file"
+  fi
+}
+ensure_config /boot/firmware/config.txt
+ensure_config /boot/config.txt
+systemctl mask plymouth-quit.service plymouth-quit-wait.service >/dev/null 2>&1 || true
+sha256sum "$LOGO_SRC" | awk '{print $1}' > "$DATA/boot-logo.sha"
+echo "Boot-Splash gespeichert. Er erscheint beim nächsten Neustart."

@@ -89,10 +89,11 @@ chmod 750 "$DATA_DIR"
 install -m 755 "$TARGET/install/hibit-mount" /usr/local/sbin/hibit-mount
 install -m 755 "$TARGET/install/hibit-update-player" /usr/local/sbin/hibit-update-player
 install -m 755 "$TARGET/install/hibit-power" /usr/local/sbin/hibit-power
+install -m 755 "$TARGET/install/hibit-splash" /usr/local/sbin/hibit-splash
 python3 "$TARGET/install/blank-cursor.py" --system || true
 SYSTEMCTL="$(command -v systemctl)"
 cat >/etc/sudoers.d/hibit-signage <<EOF
-hibit ALL=(root) NOPASSWD: /usr/local/sbin/hibit-mount, /usr/local/sbin/hibit-update-player, /usr/local/sbin/hibit-power, ${SYSTEMCTL} restart hibit-kiosk
+hibit ALL=(root) NOPASSWD: /usr/local/sbin/hibit-mount, /usr/local/sbin/hibit-update-player, /usr/local/sbin/hibit-power, /usr/local/sbin/hibit-splash, ${SYSTEMCTL} restart hibit-kiosk
 EOF
 chmod 440 /etc/sudoers.d/hibit-signage
 
@@ -138,6 +139,7 @@ if ! grep -qF "$ISSUE_MARK" /etc/issue 2>/dev/null; then
   printf '\n%s\n' "$ISSUE_MARK" >> /etc/issue
 fi
 
+/usr/local/sbin/hibit-splash || echo "Boot-Splash konnte nicht eingerichtet werden."
 systemctl daemon-reload
 systemctl disable getty@tty1.service || true
 systemctl enable getty@tty2.service || true

@@ -35,6 +35,13 @@ def _scroll_speed(value) -> int:
     return speed
 
 
+def _color_scheme(value) -> str:
+    scheme = str(value or "auto").strip().lower()
+    if scheme in {"light", "dark"}:
+        return scheme
+    return "auto"
+
+
 def _zoom(value) -> int:
     try:
         zoom = int(value or 100)
@@ -181,6 +188,7 @@ def sanitize_state(data: dict) -> dict:
             "fit": "contain" if item.get("fit") == "contain" else "cover",
             "scroll_speed": _scroll_speed(item.get("scroll_speed")),
             "zoom": _zoom(item.get("zoom")),
+            "color_scheme": _color_scheme(item.get("color_scheme")),
             "muted": bool(item.get("muted")),
             "enabled": bool(item.get("enabled", True)),
             "sort_order": index,

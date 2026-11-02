@@ -274,8 +274,9 @@ function enqueueFields(files) {
       <label>Sekunden<input name="duration_seconds" type="number" min="1" value="60" required></label>
       <label>Scroll px/s<input name="scroll_speed" type="number" min="0" max="4000" value="0"></label>
       <label>Zoom %<input name="zoom" type="number" min="100" max="300" step="10" value="100"></label>
+      <label>Farbschema<select name="color_scheme"><option value="auto">Automatisch</option><option value="light">Hell</option><option value="dark">Dunkel</option></select></label>
     </div>
-    <p class="muted">Der Player lädt die Seite selbst. Scroll px/s schiebt sie nach unten, 0 bleibt oben. Zoom % vergrößert Text und Seite, 100 bleibt original.</p>`;
+    <p class="muted">Der Player lädt die Seite selbst. Scroll px/s schiebt sie nach unten, 0 bleibt oben. Zoom % vergrößert Text und Seite, 100 bleibt original. Hell oder Dunkel zwingt das Farbschema, Automatisch folgt dem System.</p>`;
   }
   const image = mode === "image-url";
   return `<div class="grid-2">
@@ -296,10 +297,12 @@ function queueTab() {
   const rows = items.map((item, index) => `<article class="card item"><div class="item-body"><div><div class="title">${esc(item.name)}</div><div class="meta"><span class="badge">${item.kind === "web" ? "Webseite" : item.origin === "url" ? "Adresse" : item.origin === "share" ? "Freigabe" : "Datei"}</span> <span class="badge">${esc(kindLabel(item.kind))}</span> ${item.kind === "web" ? "" : `<span class="badge">${item.fit === "cover" ? "Beschnitten" : "Ganzes Bild"}</span>`} ${item.enabled ? "" : '<span class="badge warn">Pausiert</span>'}</div></div></div>
     <div class="item-tools">
       <div class="tool-fields">
+        ${item.origin === "url" ? `<label class="tool wide">Adresse<input data-field="url" data-id="${esc(item.id)}" type="url" value="${esc(item.url || "")}"></label>` : ""}
         ${item.kind === "web" ? "" : `<label class="tool">Darstellung${fitSelect(item)}</label>`}
         <label class="tool">Sekunden<input data-duration="${esc(item.id)}" type="number" min="1" placeholder="Ende" value="${item.duration_seconds ?? ""}" title="Sekunden"></label>
         ${item.kind === "video" ? "" : `<label class="tool">Scroll px/s<input data-field="scroll" data-id="${esc(item.id)}" type="number" min="0" max="4000" value="${item.scroll_speed || 0}" title="Pixel pro Sekunde, 0 bleibt stehen"></label>`}
         ${item.kind === "web" ? `<label class="tool">Zoom %<input data-field="zoom" data-id="${esc(item.id)}" type="number" min="100" max="300" step="10" value="${item.zoom || 100}" title="100 ist original, höhere Werte vergrößern die Seite"></label>` : ""}
+        ${item.kind === "web" ? `<label class="tool">Farbschema<select data-field="scheme" data-id="${esc(item.id)}" title="Hell oder Dunkel erzwingt das Farbschema dieser Seite"><option value="auto" ${(item.color_scheme || "auto") === "auto" ? "selected" : ""}>Automatisch</option><option value="light" ${item.color_scheme === "light" ? "selected" : ""}>Hell</option><option value="dark" ${item.color_scheme === "dark" ? "selected" : ""}>Dunkel</option></select></label>` : ""}
       </div>
       <div class="actions">
         <button class="ghost" data-action="up" data-id="${esc(item.id)}" ${index === 0 ? "disabled" : ""}>Hoch</button>
@@ -357,7 +360,13 @@ function settingsTab() {
       </div>
       ${state.poweroff ? `<div class="confirm-box"><p>Zweite Bestätigung: der Pi wird jetzt ausgeschaltet.</p><div class="row"><button class="danger" id="poweroff-now" type="button">Wirklich herunterfahren</button><button class="ghost" id="poweroff-cancel" type="button">Abbrechen</button></div></div>` : ""}
     </section>`;
-  return `${power}<form class="card composer" id="rename-form"><label>Name<input name="name" value="${esc(device.name)}" required></label><button type="submit">Speichern</button></form>
+  const splash = `<form class="card composer" id="splash-form">
+      <h2>Boot-Logo</h2>
+      <p class="muted">PNG, höchstens 1,5 MB. Es erscheint auf dem Pi beim Linux-Start, bis die Anzeige da ist. Sichtbar nach dem nächsten Neustart.</p>
+      <label>Logo<input name="file" type="file" accept="image/png,.png" required></label>
+      <div class="row"><button type="submit">Logo speichern</button><button class="ghost" id="splash-reset" type="button">Standardlogo</button></div>
+    </form>`;
+  return `${power}${splash}<form class="card composer" id="rename-form"><label>Name<input name="name" value="${esc(device.name)}" required></label><button type="submit">Speichern</button></form>
     ${isAdmin() ? `<form class="card composer" id="move-form"><label>Mandant wechseln<select name="tenant_id">${tenantOptions(device.tenant_id)}</select></label><button class="ghost" type="submit">Verschieben</button></form>
     <section class="card panel"><div class="spread"><div><div class="title">Geräte-Update</div><p class="muted">Der Pi zieht das GitHub-Repository und startet neu. Der Verlauf erscheint hier, danach lädt die Seite neu.</p></div><button id="device-update" type="button">Update</button></div>
     <p class="muted" id="device-update-state">${esc(updateStatusText(state.deviceUpdateState, false))}</p>
@@ -613,7 +622,7 @@ function bindQueue() {
     if (mode === "local") {
       body = { origin: "local", file_id: form.file_id.value, duration_seconds: form.duration_seconds.value, fit, scroll_speed: scroll };
     } else if (mode === "web") {
-      body = { origin: "url", kind: "web", name: form.name.value, url: form.url.value, duration_seconds: form.duration_seconds.value, scroll_speed: scroll, zoom: form.zoom ? form.zoom.value : 100 };
+      body = { origin: "url", kind: "web", name: form.name.value, url: form.url.value, duration_seconds: form.duration_seconds.value, scroll_speed: scroll, zoom: form.zoom ? form.zoom.value : 100, color_scheme: form.color_scheme ? form.color_scheme.value : "auto" };
     } else {
       body = {
         origin: "url",
@@ -661,10 +670,16 @@ function bindQueue() {
     const fit = event.target.closest("[data-field='fit']");
     const scroll = event.target.closest("[data-field='scroll']");
     const zoom = event.target.closest("[data-field='zoom']");
+    const scheme = event.target.closest("[data-field='scheme']");
+    const address = event.target.closest("[data-field='url']");
     try {
       if (input) {
         await api(`/api/devices/${deviceId()}/queue/${input.dataset.duration}`, { method: "PATCH", body: { duration_seconds: input.value } });
         toast("Dauer gespeichert");
+      }
+      if (address) {
+        await api(`/api/devices/${deviceId()}/queue/${address.dataset.id}`, { method: "PATCH", body: { url: address.value } });
+        toast("Adresse gespeichert");
       }
       if (scroll) {
         await api(`/api/devices/${deviceId()}/queue/${scroll.dataset.id}`, { method: "PATCH", body: { scroll_speed: scroll.value } });
@@ -673,6 +688,11 @@ function bindQueue() {
       if (zoom) {
         await api(`/api/devices/${deviceId()}/queue/${zoom.dataset.id}`, { method: "PATCH", body: { zoom: zoom.value } });
         toast(Number(zoom.value) > 100 ? `Zoom ${zoom.value} % gespeichert` : "Zoom auf Originalgröße");
+      }
+      if (scheme) {
+        const label = scheme.value === "dark" ? "Dunkel" : scheme.value === "light" ? "Hell" : "Automatisch";
+        await api(`/api/devices/${deviceId()}/queue/${scheme.dataset.id}`, { method: "PATCH", body: { color_scheme: scheme.value } });
+        toast(`Farbschema ${label}`);
       }
       if (fit) {
         await api(`/api/devices/${deviceId()}/queue/${fit.dataset.id}`, { method: "PATCH", body: { fit: fit.value } });
@@ -773,6 +793,33 @@ function bindShares() {
 }
 
 function bindSettings() {
+  const splash = document.getElementById("splash-form");
+  if (splash) {
+    splash.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const file = splash.file.files[0];
+      if (!file) {
+        toast("Bitte ein PNG wählen", true);
+        return;
+      }
+      const body = new FormData();
+      body.append("file", file);
+      try {
+        const result = await api(`/api/devices/${deviceId()}/boot-logo`, { method: "POST", body });
+        toast(result.message || "Logo gespeichert");
+      } catch (error) {
+        toast(error.message, true);
+      }
+    });
+    document.getElementById("splash-reset").addEventListener("click", async () => {
+      try {
+        const result = await api(`/api/devices/${deviceId()}/boot-logo`, { method: "DELETE" });
+        toast(result.message || "Standardlogo wiederhergestellt");
+      } catch (error) {
+        toast(error.message, true);
+      }
+    });
+  }
   document.getElementById("rename-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     try {

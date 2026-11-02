@@ -35,10 +35,11 @@ echo "Installiere Abhängigkeiten …"
 echo "Aktualisiere Systemdateien …"
 install -m 755 "$INSTALL/install/hibit-power" /usr/local/sbin/hibit-power
 install -m 755 "$INSTALL/install/hibit-update-player" /usr/local/sbin/hibit-update-player
+install -m 755 "$INSTALL/install/hibit-splash" /usr/local/sbin/hibit-splash
 python3 "$INSTALL/install/blank-cursor.py" --system || true
 SYSTEMCTL="$(command -v systemctl)"
 cat >/etc/sudoers.d/hibit-signage <<EOF
-hibit ALL=(root) NOPASSWD: /usr/local/sbin/hibit-mount, /usr/local/sbin/hibit-update-player, /usr/local/sbin/hibit-power, ${SYSTEMCTL} restart hibit-kiosk
+hibit ALL=(root) NOPASSWD: /usr/local/sbin/hibit-mount, /usr/local/sbin/hibit-update-player, /usr/local/sbin/hibit-power, /usr/local/sbin/hibit-splash, ${SYSTEMCTL} restart hibit-kiosk
 EOF
 chmod 440 /etc/sudoers.d/hibit-signage
 for policy_dir in /etc/chromium/policies/managed /etc/chromium-browser/policies/managed; do
@@ -47,6 +48,8 @@ for policy_dir in /etc/chromium/policies/managed /etc/chromium-browser/policies/
   chmod 644 "$policy_dir/hibit-signage.json"
 done
 install -m 755 "$INSTALL/install/hibit-update-player" /usr/local/sbin/hibit-update-player || true
+echo "Richte den Boot-Splash ein …"
+/usr/local/sbin/hibit-splash || echo "Boot-Splash konnte nicht eingerichtet werden."
 bash "$INSTALL/install/updateprep/hibit-update-protect.sh" || true
 echo "Starte den Player neu …"
 systemctl restart hibit-signage
