@@ -19,6 +19,7 @@ const state = {
   updateState: "idle",
   deviceLog: "",
   deviceUpdateState: "idle",
+  tenantId: localStorage.getItem("hibit-tenant") || "",
 };
 
 function esc(value) {
@@ -153,7 +154,15 @@ function isAdmin() {
 }
 
 function brand() {
-  return '<div class="brand"><span class="mark">HiBit</span><span class="product">Cloud</span></div>';
+  return `<a class="brand" href="#/dashboard"><img class="logo-on-dark" src="/logo-on-dark.png" alt="HiBit"><img class="logo-on-light" src="/logo-on-light.png" alt=""></a>`;
+}
+
+function themeSwitch() {
+  const theme = document.documentElement.dataset.theme === "light" ? "light" : "dark";
+  return `<div class="theme-switch" role="group" aria-label="Darstellung">
+    <button type="button" data-theme-set="light" class="${theme === "light" ? "active" : ""}">Hell</button>
+    <button type="button" data-theme-set="dark" class="${theme === "dark" ? "active" : ""}">Dunkel</button>
+  </div>`;
 }
 
 function nav() {
@@ -166,7 +175,7 @@ function nav() {
 }
 
 function layout(inner) {
-  return `<div class="shell"><aside class="side">${brand()}<nav class="nav">${nav()}</nav>
+  return `<div class="shell"><aside class="side">${brand()}${themeSwitch()}${tenantSwitch()}<nav class="nav">${nav()}</nav>
     <div class="side-foot"><div class="muted">${esc(state.user.name)}<br>${esc(roleLabel(state.user.role))}${state.user.tenant_name ? "<br>" + esc(state.user.tenant_name) : ""}</div>
     <button class="ghost" id="logout" type="button">Abmelden</button></div></aside><main class="main">${inner}</main></div>`;
 }
@@ -189,33 +198,85 @@ function statusBadge(device) {
 
 function dashboardHtml() {
   const data = state.dashboard || { adopted: 0, online: 0, pending: 0, tenants: 0, devices: [] };
-  const rows = (data.devices || []).map((device) => `<a class="card item" href="#/device/${device.id}"><div><div class="title">${esc(device.name || device.hostname || "Gerät")}</div><div class="meta">${esc(device.tenant_name || "ohne Mandant")} · ${esc((device.ips || []).join(", ") || "keine IP")}</div></div><div>${statusBadge(device)}</div></a>`).join("");
+  const devices = filterDevices(data.devices || []);
+  const adopted = devices.filter((device) => device.status !== "pending");
+  const pending = devices.filter((device) => device.status === "pending");
+  const online = adopted.filter((device) => device.online).length;
+  const tenantCount = selectedTenant() ? 1 : data.tenants;
   return `<div class="page-head"><div><h1>Übersicht</h1><p class="muted">Geräte melden sich selbst und bleiben verbunden.</p></div></div>
     <div class="stats">
-      <article class="card stat"><span class="muted">Adoptiert</span><b>${data.adopted}</b></article>
-      <article class="card stat"><span class="muted">Online</span><b>${data.online}</b></article>
-      <article class="card stat"><span class="muted">Warten</span><b>${data.pending}</b></article>
-      <article class="card stat"><span class="muted">Mandanten</span><b>${data.tenants}</b></article>
+      <article class="card stat"><span class="muted">Adoptiert</span><b>${adopted.length}</b></article>
+      <article class="card stat"><span class="muted">Online</span><b>${online}</b></article>
+      <article class="card stat"><span class="muted">Warten</span><b>${pending.length}</b></article>
+      <article class="card stat"><span class="muted">Mandanten</span><b>${tenantCount}</b></article>
     </div>
-    <div class="list">${rows || '<div class="card panel muted">Noch keine Geräte. Lege einen Einschreibeschlüssel an und installiere einen Player.</div>'}</div>`;
+    ${deviceGroups(devices, "Noch keine Geräte. Lege einen Einschreibeschlüssel an und installiere einen Player.")}`;
 }
 
 function tenantOptions(selected) {
   return state.tenants.map((tenant) => `<option value="${esc(tenant.id)}" ${tenant.id === selected ? "selected" : ""}>${esc(tenant.name)}</option>`).join("");
 }
 
+function selectedTenant() {
+  if (!isAdmin() || !state.tenantId) return "";
+  return state.tenants.some((tenant) => tenant.id === state.tenantId) ? state.tenantId : "";
+}
+
+function tenantSwitch() {
+  if (!isAdmin() || state.tenants.length < 1) return "";
+  const current = selectedTenant();
+  return `<label class="tenant-switch">Mandant<select id="tenant-filter">
+    <option value="" ${current ? "" : "selected"}>Alle Mandanten</option>
+    ${tenantOptions(current)}
+  </select></label>`;
+}
+
+function filterDevices(devices) {
+  const tenantId = selectedTenant();
+  if (!tenantId) return devices;
+  return devices.filter((device) => device.tenant_id === tenantId);
+}
+
+function deviceCard(device) {
+  return `<a class="card item" href="#/device/${device.id}"><div><div class="title">${esc(device.name || device.hostname || "Gerät")}</div><div class="meta">${esc(device.tenant_name || "ohne Mandant")} · ${esc((device.ips || []).join(", ") || "keine IP")}</div></div><div>${statusBadge(device)}</div></a>`;
+}
+
+function groupsFor(devices) {
+  const buckets = new Map();
+  devices.forEach((device) => {
+    const key = device.tenant_id || "";
+    if (!buckets.has(key)) buckets.set(key, { name: device.tenant_name || "Ohne Mandant", devices: [] });
+    buckets.get(key).devices.push(device);
+  });
+  const ordered = [];
+  state.tenants.forEach((tenant) => {
+    if (buckets.has(tenant.id)) ordered.push(buckets.get(tenant.id));
+  });
+  if (buckets.has("")) ordered.push(buckets.get(""));
+  buckets.forEach((group, key) => {
+    if (key && !state.tenants.some((tenant) => tenant.id === key)) ordered.push(group);
+  });
+  return ordered;
+}
+
+function deviceGroups(devices, emptyText) {
+  if (!devices.length) return `<div class="card panel muted">${emptyText}</div>`;
+  if (selectedTenant() || state.tenants.length < 2) return `<div class="list">${devices.map(deviceCard).join("")}</div>`;
+  return groupsFor(devices).map((group) => `<section class="tenant-block"><h2>${esc(group.name)}</h2><div class="list">${group.devices.map(deviceCard).join("")}</div></section>`).join("");
+}
+
 function devicesHtml() {
-  const pending = state.devices.filter((device) => device.status === "pending");
-  const adopted = state.devices.filter((device) => device.status !== "pending");
+  const visible = filterDevices(state.devices);
+  const pending = visible.filter((device) => device.status === "pending");
+  const adopted = visible.filter((device) => device.status !== "pending");
   const pendingCards = pending.map((device) => `<article class="card item pending">
       <div><div class="title">${esc(device.hostname || "Neues Gerät")}</div>
-      <div class="meta">${esc((device.ips || []).join(", "))} · ${esc(device.version || "")} · gesehen ${esc(when(device.last_seen))}</div></div>
+      <div class="meta">${esc(device.tenant_name || "ohne Mandant")} · ${esc((device.ips || []).join(", "))} · ${esc(device.version || "")} · gesehen ${esc(when(device.last_seen))}</div></div>
       <a class="button" href="#/device/${device.id}">Adoptieren</a>
     </article>`).join("");
-  const rows = adopted.map((device) => `<a class="card item" href="#/device/${device.id}"><div><div class="title">${esc(device.name)}</div><div class="meta">${esc(device.tenant_name || "")} · ${esc((device.ips || []).join(", "))}</div></div><div>${statusBadge(device)}</div></a>`).join("");
   return `<div class="page-head"><div><h1>Geräte</h1><p class="muted">Ausstehende Geräte brauchen einen Adopt, danach gehören sie zu einem Mandanten.</p></div><button class="ghost" id="reload" type="button">Aktualisieren</button></div>
     ${pendingCards ? `<h2>Warten auf Adopt</h2><div class="list">${pendingCards}</div>` : ""}
-    <h2>Im Betrieb</h2><div class="list">${rows || '<div class="card panel muted">Keine adoptierten Geräte.</div>'}</div>`;
+    <h2>Im Betrieb</h2>${deviceGroups(adopted, "Keine adoptierten Geräte.")}`;
 }
 
 function deviceHtml() {
@@ -458,6 +519,7 @@ async function onLogin(event) {
 
 async function load() {
   const current = route();
+  if (isAdmin()) state.tenants = (await api("/api/tenants")).tenants;
   if (current.name === "dashboard") state.dashboard = await api("/api/dashboard");
   if (current.name === "devices" || current.name === "device") state.devices = (await api("/api/devices")).devices;
   if (current.name === "device") {
@@ -573,6 +635,22 @@ function startPreview() {
 }
 
 function bind(current) {
+  document.querySelectorAll("[data-theme-set]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const theme = button.dataset.themeSet === "light" ? "light" : "dark";
+      document.documentElement.dataset.theme = theme;
+      localStorage.setItem("hibit-theme", theme);
+      document.querySelectorAll("[data-theme-set]").forEach((item) => item.classList.toggle("active", item.dataset.themeSet === theme));
+    });
+  });
+  const tenantFilter = document.getElementById("tenant-filter");
+  if (tenantFilter) {
+    tenantFilter.addEventListener("change", () => {
+      state.tenantId = tenantFilter.value;
+      localStorage.setItem("hibit-tenant", state.tenantId);
+      render();
+    });
+  }
   const reload = document.getElementById("reload");
   if (reload) reload.addEventListener("click", () => show());
   if (current.name === "device" && state.device && state.device.status === "pending") {

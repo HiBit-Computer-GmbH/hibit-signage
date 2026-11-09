@@ -219,7 +219,7 @@ app = FastAPI(title="HiBit Signage Cloud", version=version(), docs_url=None, red
 @app.middleware("http")
 async def guard(request: Request, call_next):
     path = request.url.path
-    if path.startswith("/api/agent/") or path in {"/", "/cloud.js", "/cloud.css", "/terminal.js", "/favicon.ico"}:
+    if path.startswith("/api/agent/") or path in {"/", "/cloud.js", "/cloud.css", "/terminal.js", "/favicon.ico", "/logo-on-dark.png", "/logo-on-light.png"}:
         return await call_next(request)
     if request.method == "GET" and path == "/api/health":
         return await call_next(request)
@@ -248,6 +248,16 @@ def cloud_js():
 @app.get("/cloud.css")
 def cloud_css():
     return _static(STATIC / "cloud.css", "text/css")
+
+
+@app.get("/logo-on-dark.png")
+def logo_on_dark():
+    return _static(STATIC / "logo-on-dark.png", "image/png")
+
+
+@app.get("/logo-on-light.png")
+def logo_on_light():
+    return _static(STATIC / "logo-on-light.png", "image/png")
 
 
 @app.get("/terminal.js")
@@ -319,7 +329,7 @@ def dashboard(request: Request):
         "online": sum(1 for item in adopted if hub.online(item["id"])),
         "pending": len(pending),
         "tenants": len(db.list_tenants()) if user["role"] == "superadmin" else (1 if user.get("tenant_id") else 0),
-        "devices": [_summary(item) for item in devices[:8]],
+        "devices": [_summary(item) for item in devices],
     }
 
 
