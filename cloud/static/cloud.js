@@ -153,15 +153,21 @@ function isAdmin() {
   return state.user && state.user.role === "superadmin";
 }
 
+function icon(path) {
+  return `<svg viewBox="0 0 24 24" aria-hidden="true">${path}</svg>`;
+}
+
 function brand() {
-  return `<a class="brand" href="#/dashboard"><img class="logo-on-dark" src="/logo-on-dark.png" alt="HiBit"><img class="logo-on-light" src="/logo-on-light.png" alt=""></a>`;
+  return `<a class="brand" href="#/dashboard"><img class="logo-on-dark" src="/logo-on-dark.png" alt="HiBit"><img class="logo-on-light" src="/logo-on-light.png" alt=""><span class="product">Signage Cloud</span></a>`;
 }
 
 function themeSwitch() {
   const theme = document.documentElement.dataset.theme === "light" ? "light" : "dark";
+  const sun = icon('<circle cx="12" cy="12" r="3.5" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M12 3.5v2.2M12 18.3v2.2M3.5 12h2.2M18.3 12h2.2M6 6l1.6 1.6M16.4 16.4 18 18M18 6l-1.6 1.6M7.6 16.4 6 18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>');
+  const moon = icon('<path d="M15.8 3.4a7.6 7.6 0 1 0 4.8 11.4A6.1 6.1 0 0 1 15.8 3.4z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>');
   return `<div class="theme-switch" role="group" aria-label="Darstellung">
-    <button type="button" data-theme-set="light" class="${theme === "light" ? "active" : ""}">Hell</button>
-    <button type="button" data-theme-set="dark" class="${theme === "dark" ? "active" : ""}">Dunkel</button>
+    <button type="button" data-theme-set="light" class="${theme === "light" ? "active" : ""}" aria-label="Helle Darstellung" title="Hell">${sun}</button>
+    <button type="button" data-theme-set="dark" class="${theme === "dark" ? "active" : ""}" aria-label="Dunkle Darstellung" title="Dunkel">${moon}</button>
   </div>`;
 }
 
@@ -175,9 +181,10 @@ function nav() {
 }
 
 function layout(inner) {
-  return `<div class="shell"><aside class="side">${brand()}${themeSwitch()}${tenantSwitch()}<nav class="nav">${nav()}</nav>
-    <div class="side-foot"><div class="muted">${esc(state.user.name)}<br>${esc(roleLabel(state.user.role))}${state.user.tenant_name ? "<br>" + esc(state.user.tenant_name) : ""}</div>
-    <button class="ghost" id="logout" type="button">Abmelden</button></div></aside><main class="main">${inner}</main></div>`;
+  const out = icon('<path d="M10 7V5.2A1.2 1.2 0 0 1 11.2 4H19v16h-7.8A1.2 1.2 0 0 1 10 18.8V17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M4 12h10.2M11.2 8.2 15 12l-3.8 3.8" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>');
+  return `<div class="shell"><aside class="side">${brand()}${tenantSwitch()}<nav class="nav">${nav()}</nav>
+    <div class="side-foot"><div class="who"><div class="who-name">${esc(state.user.name)}</div><div class="who-role">${esc(roleLabel(state.user.role))}${state.user.tenant_name ? " · " + esc(state.user.tenant_name) : ""}</div></div>
+    <div class="side-tools">${themeSwitch()}<button class="icon" id="logout" type="button" aria-label="Abmelden" title="Abmelden">${out}</button></div></div></aside><main class="main">${inner}</main></div>`;
 }
 
 function loginHtml() {
@@ -225,10 +232,17 @@ function selectedTenant() {
 function tenantSwitch() {
   if (!isAdmin() || state.tenants.length < 1) return "";
   const current = selectedTenant();
-  return `<label class="tenant-switch">Mandant<select id="tenant-filter">
-    <option value="" ${current ? "" : "selected"}>Alle Mandanten</option>
-    ${tenantOptions(current)}
-  </select></label>`;
+  const currentName = current ? (state.tenants.find((tenant) => tenant.id === current) || {}).name || "Mandant" : "Alle Mandanten";
+  const options = [{ id: "", name: "Alle Mandanten" }].concat(state.tenants.map((tenant) => ({ id: tenant.id, name: tenant.name })));
+  const chevron = icon('<path d="M7 10l5 5 5-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>');
+  return `<div class="tenant-switch">
+    <button type="button" class="tenant-current" id="tenant-toggle" aria-haspopup="listbox" aria-expanded="false">
+      <span><span class="kicker">Mandant</span><span class="tenant-name">${esc(currentName)}</span></span>${chevron}
+    </button>
+    <div class="tenant-menu" id="tenant-menu" role="listbox" hidden>
+      ${options.map((option) => `<button type="button" role="option" data-tenant="${esc(option.id)}" class="${option.id === current ? "active" : ""}" aria-selected="${option.id === current ? "true" : "false"}">${esc(option.name)}</button>`).join("")}
+    </div>
+  </div>`;
 }
 
 function filterDevices(devices) {
@@ -643,10 +657,20 @@ function bind(current) {
       document.querySelectorAll("[data-theme-set]").forEach((item) => item.classList.toggle("active", item.dataset.themeSet === theme));
     });
   });
-  const tenantFilter = document.getElementById("tenant-filter");
-  if (tenantFilter) {
-    tenantFilter.addEventListener("change", () => {
-      state.tenantId = tenantFilter.value;
+  const tenantToggle = document.getElementById("tenant-toggle");
+  const tenantMenu = document.getElementById("tenant-menu");
+  if (tenantToggle && tenantMenu) {
+    tenantToggle.addEventListener("click", (event) => {
+      event.stopPropagation();
+      const open = tenantMenu.hasAttribute("hidden");
+      tenantMenu.toggleAttribute("hidden", !open);
+      tenantToggle.setAttribute("aria-expanded", open ? "true" : "false");
+      tenantToggle.closest(".tenant-switch").classList.toggle("open", open);
+    });
+    tenantMenu.addEventListener("click", (event) => {
+      const option = event.target.closest("[data-tenant]");
+      if (!option) return;
+      state.tenantId = option.dataset.tenant;
       localStorage.setItem("hibit-tenant", state.tenantId);
       render();
     });
@@ -1145,6 +1169,16 @@ function bindSystem() {
   });
 }
 
+document.addEventListener("click", () => {
+  const menu = document.getElementById("tenant-menu");
+  const toggle = document.getElementById("tenant-toggle");
+  if (!menu || menu.hidden) return;
+  menu.hidden = true;
+  if (toggle) {
+    toggle.setAttribute("aria-expanded", "false");
+    toggle.closest(".tenant-switch").classList.remove("open");
+  }
+});
 window.addEventListener("hashchange", () => show());
 api("/api/me").then((user) => {
   state.user = user;
