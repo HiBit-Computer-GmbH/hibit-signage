@@ -6,6 +6,7 @@ import hashlib
 import json
 import logging
 import os
+import time
 import urllib.error
 import urllib.request
 import uuid
@@ -16,6 +17,34 @@ from hibit_player.config import media_dir, version
 from hibit_player.network import hostname, local_ips
 
 log = logging.getLogger("hibit.player.agent")
+_STARTED = time.monotonic()
+
+
+def runtime_facts() -> dict:
+    facts = {"service_seconds": int(time.monotonic() - _STARTED)}
+    try:
+        with open("/proc/uptime", encoding="ascii") as handle:
+            facts["uptime_seconds"] = int(float(handle.read().split()[0]))
+    except OSError:
+        pass
+    try:
+        with open("/proc/loadavg", encoding="ascii") as handle:
+            facts["load"] = handle.read().split()[0]
+    except OSError:
+        pass
+    try:
+        memory = {}
+        with open("/proc/meminfo", encoding="ascii") as handle:
+            for line in handle:
+                key, _, rest = line.partition(":")
+                if key in {"MemTotal", "MemAvailable"}:
+                    memory[key] = int(rest.strip().split()[0]) * 1024
+        if "MemTotal" in memory:
+            facts["mem_total"] = memory["MemTotal"]
+            facts["mem_available"] = memory.get("MemAvailable")
+    except OSError:
+        pass
+    return facts
 
 
 def ws_url(cloud_url: str) -> str:
@@ -124,6 +153,7 @@ class CloudAgent:
             "applied_revision": meta["applied_revision"],
             "dirty": meta["dirty"],
             "mounts": mounts.status_map(),
+            **runtime_facts(),
         }
         if token:
             payload["token"] = token
@@ -280,6 +310,7 @@ class CloudAgent:
             "dirty": meta["dirty"],
             "mounts": mounts.status_map(),
             "last_error": self.last_error,
+            **runtime_facts(),
         }
 
     async def _pusher(self, ws) -> None:

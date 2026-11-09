@@ -202,6 +202,10 @@ function fitSelect(item) {
   </select>`;
 }
 
+function durationPresets(current) {
+  return `<div class="presets" role="group" aria-label="Dauer">${[15, 30, 45, 60, 120].map((seconds) => `<button type="button" class="ghost preset${Number(current) === seconds ? " active" : ""}" data-preset="${seconds}">${seconds}s</button>`).join("")}</div>`;
+}
+
 function enqueueFields() {
   const mode = state.addMode || "image-url";
   if (mode === "local") {
@@ -209,7 +213,7 @@ function enqueueFields() {
     if (!options) return `<p class="muted">Noch keine Datei. Zuerst unter <a href="#/media">Medien</a> hochladen.</p>`;
     return `<div class="grid-2">
       <label>Datei<select name="file_id" required>${options}</select></label>
-      <label>Sekunden<input name="duration_seconds" type="number" min="1" value="10"></label>
+      <label>Sekunden<input name="duration_seconds" type="number" min="1" value="10">${durationPresets(10)}</label>
       <label>Scroll px/s<input name="scroll_speed" type="number" min="0" max="4000" value="0"></label>
     </div>
     <label class="check"><input type="checkbox" name="fit_screen" checked> An Auflösung anpassen</label>
@@ -219,7 +223,7 @@ function enqueueFields() {
     return `<div class="grid-2">
       <label>Name<input name="name" placeholder="Optional"></label>
       <label>Adresse<input name="url" type="url" placeholder="https://example.com" required></label>
-      <label>Sekunden<input name="duration_seconds" type="number" min="1" value="60" required></label>
+      <label>Sekunden<input name="duration_seconds" type="number" min="1" value="60" required>${durationPresets(60)}</label>
       <label>Scroll px/s<input name="scroll_speed" type="number" min="0" max="4000" value="0"></label>
       <label>Zoom %<input name="zoom" type="number" min="100" max="300" step="10" value="100"></label>
       <label>Farbschema<select name="color_scheme"><option value="auto">Automatisch</option><option value="light">Hell</option><option value="dark">Dunkel</option></select></label>
@@ -230,7 +234,7 @@ function enqueueFields() {
   return `<div class="grid-2">
     <label>Name<input name="name" placeholder="Optional"></label>
     <label>Adresse<input name="url" type="url" placeholder="${image ? "https://…/bild.jpg" : "https://…/clip.mp4"}" required></label>
-    <label>Sekunden<input name="duration_seconds" type="number" min="1" value="${image ? "10" : ""}" placeholder="${image ? "" : "bis zum Ende"}"></label>
+    <label>Sekunden<input name="duration_seconds" type="number" min="1" value="${image ? "10" : ""}" placeholder="${image ? "" : "bis zum Ende"}">${durationPresets(image ? 10 : "")}</label>
     ${image ? `<label>Scroll px/s<input name="scroll_speed" type="number" min="0" max="4000" value="0"></label>` : ""}
   </div>
   <label class="check"><input type="checkbox" name="fit_screen" ${image ? "checked" : ""}> An Auflösung anpassen</label>
@@ -450,6 +454,13 @@ async function show() {
 function bindQueue() {
   const form = document.getElementById("enqueue-form");
   form.addEventListener("click", (event) => {
+    const preset = event.target.closest("[data-preset]");
+    if (preset) {
+      const input = form.querySelector("[name=duration_seconds]");
+      if (input) input.value = preset.dataset.preset;
+      form.querySelectorAll("[data-preset]").forEach((item) => item.classList.toggle("active", item === preset));
+      return;
+    }
     const button = event.target.closest("[data-mode]");
     if (!button) return;
     state.addMode = button.dataset.mode;

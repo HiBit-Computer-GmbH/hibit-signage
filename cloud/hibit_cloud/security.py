@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import hmac
 import secrets
+import struct
+import time
 
 ITERATIONS = 200_000
 KEY_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
@@ -41,6 +44,56 @@ def hashes_equal(left: str, right: str) -> bool:
 def new_enrollment_key() -> str:
     groups = ["".join(secrets.choice(KEY_ALPHABET) for _ in range(4)) for _ in range(4)]
     return "HB-" + "-".join(groups)
+
+
+def new_totp_secret() -> str:
+    return base64.b32encode(secrets.token_bytes(20)).decode("ascii").rstrip("=")
+
+
+def totp_code(secret: str, moment: float | None = None, step: int = 30) -> str:
+    padded = secret.strip().upper()
+    padded += "=" * ((8 - len(padded) % 8) % 8)
+    key = base64.b32decode(padded, casefold=True)
+    counter = int((time.time() if moment is None else moment) // step)
+    digest = hmac.new(key, struct.pack(">Q", counter), hashlib.sha1).digest()
+    offset = digest[-1] & 0x0F
+    binary = struct.unpack(">I", digest[offset : offset + 4])[0] & 0x7FFFFFFF
+    return f"{binary % 1_000_000:06d}"
+
+
+def totp_valid(secret: str, code: str, drift: int = 1) -> bool:
+    cleaned = "".join(ch for ch in (code or "") if ch.isdigit())
+    if len(cleaned) != 6 or not secret:
+        return False
+    now = time.time()
+    try:
+        for offset in range(-drift, drift + 1):
+            if hmac.compare_digest(totp_code(secret, now + offset * 30), cleaned):
+                return True
+    except (ValueError, TypeError):
+        return False
+    return False
+
+
+def new_recovery_codes() -> list[str]:
+    codes = []
+    for _ in range(8):
+        raw = "".join(secrets.choice(KEY_ALPHABET) for _ in range(8))
+        codes.append(f"{raw[:4]}-{raw[4:]}")
+    return codes
+
+
+def recovery_hash(code: str) -> str:
+    compact = "".join(ch for ch in (code or "").upper() if ch.isalnum())
+    return hashlib.sha256(compact.encode("utf-8")).hexdigest()
+
+
+def otpauth_uri(secret: str, email: str) -> str:
+    from urllib.parse import quote
+
+    label = quote(f"HiBit Signage:{email}")
+    issuer = quote("HiBit Signage")
+    return f"otpauth://totp/{label}?secret={secret}&issuer={issuer}&digits=6&period=30"
 
 
 def normalize_enrollment_key(value: str) -> str:

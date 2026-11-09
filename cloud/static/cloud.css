@@ -280,6 +280,16 @@ table {
   position: fixed; inset: 28px; width: auto; height: auto; aspect-ratio: auto; z-index: 30;
   margin: 0; box-shadow: 0 0 0 100vmax rgba(0, 0, 0, 0.72);
 }
+.facts { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 8px; color: var(--muted); font-size: 0.84rem; }
+.facts b { color: var(--text); font-weight: 650; }
+.quiet { margin: 0; color: var(--muted); }
+.presets { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.presets button { min-height: 26px; padding: 2px 8px; font-size: 0.78rem; }
+.presets button.active { background: var(--lime); color: var(--ink); border-color: transparent; }
+.secret { font-family: var(--mono); letter-spacing: 0.04em; font-size: 0.95rem; margin: 0; }
+td.actions { white-space: nowrap; }
+td.actions button { margin-left: 6px; }
+.row input[type="datetime-local"] { width: auto; }
 @media (max-width: 980px) {
   .shell { grid-template-columns: 1fr; }
   .side { position: static; height: auto; overflow: visible; border-right: 0; border-bottom: 1px solid var(--line); }

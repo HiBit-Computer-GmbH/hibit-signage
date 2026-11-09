@@ -20,6 +20,10 @@ const state = {
   deviceLog: "",
   deviceUpdateState: "idle",
   tenantId: localStorage.getItem("hibit-tenant") || "",
+  ticket: "",
+  editUser: "",
+  totpSetup: null,
+  recoveryCodes: null,
 };
 
 function esc(value) {
@@ -46,6 +50,38 @@ function when(value) {
   if (!value) return "noch nie";
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString("de-DE");
+}
+
+function durationLabel(seconds) {
+  const value = Number(seconds);
+  if (!Number.isFinite(value) || value < 0) return "–";
+  const total = Math.floor(value);
+  const days = Math.floor(total / 86400);
+  const hours = Math.floor((total % 86400) / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  if (days > 0) return `${days} T ${hours} Std`;
+  if (hours > 0) return `${hours} Std ${minutes} Min`;
+  if (minutes > 0) return `${minutes} Min`;
+  return `${total} s`;
+}
+
+function localInput(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const pad = (part) => String(part).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function durationPresets(current) {
+  return `<div class="presets" role="group" aria-label="Dauer">${[15, 30, 45, 60, 120].map((seconds) => `<button type="button" class="ghost preset${Number(current) === seconds ? " active" : ""}" data-preset="${seconds}">${seconds}s</button>`).join("")}</div>`;
+}
+
+function runtimeLine(device) {
+  const runtime = device.runtime || {};
+  const bits = [`Uptime ${durationLabel(runtime.uptime_seconds)}`, `Laufzeit ${durationLabel(runtime.service_seconds)}`];
+  if (device.update_at) bits.push(`Update ${when(device.update_at)}`);
+  return bits.join(" · ");
 }
 
 function toast(message, bad) {
@@ -77,7 +113,7 @@ async function api(path, options = {}) {
       data = null;
     }
   }
-  if (response.status === 401 && path !== "/api/login") {
+  if (response.status === 401 && path !== "/api/login" && path !== "/api/login/totp") {
     state.user = null;
     render();
     throw new Error("Anmeldung erforderlich");
@@ -176,6 +212,7 @@ function nav() {
   const items = [["dashboard", "Übersicht"], ["devices", "Geräte"]];
   if (isAdmin()) items.push(["tenants", "Mandanten"], ["keys", "Schlüssel"]);
   if (state.user.role !== "tenant_user") items.push(["users", "Benutzer"]);
+  items.push(["account", "Konto"]);
   if (isAdmin()) items.push(["system", "System"]);
   return items.map(([id, label]) => `<a href="#/${id}" class="${current === id || (current === "device" && id === "devices") ? "active" : ""}">${label}</a>`).join("");
 }
@@ -188,6 +225,15 @@ function layout(inner) {
 }
 
 function loginHtml() {
+  if (state.ticket) {
+    return `<div class="login-wrap"><form class="card login" id="totp-form">${brand()}
+      <h1>Zweiter Faktor</h1>
+      <p class="muted">Code aus der Authenticator-App oder ein Wiederherstellungscode.</p>
+      <label>Code<input name="code" inputmode="numeric" autocomplete="one-time-code" required></label>
+      <p class="error" id="login-error"></p>
+      <div class="row"><button type="submit">Bestätigen</button><button class="ghost" id="totp-back" type="button">Zurück</button></div>
+    </form></div>`;
+  }
   return `<div class="login-wrap"><form class="card login" id="login-form">${brand()}
     <h1>Cloud-Konsole</h1>
     <p class="muted">Geräte adoptieren, Mandanten zuweisen und Wiedergabe steuern.</p>
@@ -209,15 +255,21 @@ function dashboardHtml() {
   const adopted = devices.filter((device) => device.status !== "pending");
   const pending = devices.filter((device) => device.status === "pending");
   const online = adopted.filter((device) => device.online).length;
+  const offline = adopted.filter((device) => !device.online);
   const tenantCount = selectedTenant() ? 1 : data.tenants;
-  return `<div class="page-head"><div><h1>Übersicht</h1><p class="muted">Geräte melden sich selbst und bleiben verbunden.</p></div></div>
+  const attention = pending.concat(offline);
+  const running = adopted.filter((device) => device.online);
+  return `<div class="page-head"><div><h1>Übersicht</h1><p class="muted">Was gerade läuft und wo etwas fehlt.</p></div></div>
     <div class="stats">
-      <article class="card stat"><span class="muted">Adoptiert</span><b>${adopted.length}</b></article>
       <article class="card stat"><span class="muted">Online</span><b>${online}</b></article>
+      <article class="card stat"><span class="muted">Offline</span><b>${offline.length}</b></article>
       <article class="card stat"><span class="muted">Warten</span><b>${pending.length}</b></article>
       <article class="card stat"><span class="muted">Mandanten</span><b>${tenantCount}</b></article>
     </div>
-    ${deviceGroups(devices, "Noch keine Geräte. Lege einen Einschreibeschlüssel an und installiere einen Player.")}`;
+    <h2>Aufmerksamkeit</h2>
+    ${attention.length ? `<div class="list">${attention.map(deviceCard).join("")}</div>` : '<p class="quiet">Alle adoptierten Geräte sind online.</p>'}
+    <h2>Im Betrieb</h2>
+    ${deviceGroups(running, "Gerade ist kein Gerät online.")}`;
 }
 
 function tenantOptions(selected) {
@@ -252,7 +304,8 @@ function filterDevices(devices) {
 }
 
 function deviceCard(device) {
-  return `<a class="card item" href="#/device/${device.id}"><div><div class="title">${esc(device.name || device.hostname || "Gerät")}</div><div class="meta">${esc(device.tenant_name || "ohne Mandant")} · ${esc((device.ips || []).join(", ") || "keine IP")}</div></div><div>${statusBadge(device)}</div></a>`;
+  const runtime = device.status === "pending" ? "" : `<div class="meta">${esc(runtimeLine(device))}</div>`;
+  return `<a class="card item" href="#/device/${device.id}"><div><div class="title">${esc(device.name || device.hostname || "Gerät")}</div><div class="meta">${esc(device.tenant_name || "ohne Mandant")} · ${esc((device.ips || []).join(", ") || "keine IP")}${device.version ? " · " + esc(device.version) : ""}</div>${runtime}</div><div>${statusBadge(device)}</div></a>`;
 }
 
 function groupsFor(devices) {
@@ -308,7 +361,10 @@ function deviceHtml() {
       </form>`;
   }
   const tabs = [["queue", "Warteschlange"], ["media", "Medien"], ["shares", "Freigaben"], ["terminal", "Terminal"], ["settings", "Gerät"]];
-  return `<div class="page-head"><div><h1>${esc(device.name)}</h1><p class="muted">${esc(device.tenant_name || "")} · ${statusBadge(device)} · Rev. ${device.state_revision}</p></div></div>
+  const runtime = device.runtime || {};
+  const memory = runtime.mem_total ? `${sizeLabel(runtime.mem_total - (runtime.mem_available || 0))} von ${sizeLabel(runtime.mem_total)}` : "–";
+  return `<div class="page-head"><div><h1>${esc(device.name)}</h1><p class="muted">${esc(device.tenant_name || "")} · ${statusBadge(device)} · Rev. ${device.state_revision}</p>
+    <div class="facts"><span>Uptime <b>${durationLabel(runtime.uptime_seconds)}</b></span><span>System-Laufzeit <b>${durationLabel(runtime.service_seconds)}</b></span><span>Last <b>${esc(runtime.load || "–")}</b></span><span>RAM <b>${memory}</b></span></div></div></div>
     <section class="card panel">
       <div class="spread"><div><div class="title">Anzeige</div><p class="muted" id="preview-state">Warte auf den Pi</p></div></div>
       <div class="preview" id="preview-frame">
@@ -336,7 +392,7 @@ function enqueueFields(files) {
     if (!options) return `<p class="muted">Noch keine Datei. Zuerst unter <a href="#/device/${deviceId()}/media">Medien</a> hochladen.</p>`;
     return `<div class="grid-2">
       <label>Datei<select name="file_id" required>${options}</select></label>
-      <label>Sekunden<input name="duration_seconds" type="number" min="1" value="10"></label>
+      <label>Sekunden<input name="duration_seconds" type="number" min="1" value="10">${durationPresets(10)}</label>
       <label>Scroll px/s<input name="scroll_speed" type="number" min="0" max="4000" value="0"></label>
     </div>
     <label class="check"><input type="checkbox" name="fit_screen" checked> An Auflösung anpassen</label>
@@ -346,7 +402,7 @@ function enqueueFields(files) {
     return `<div class="grid-2">
       <label>Name<input name="name" placeholder="Optional"></label>
       <label>Adresse<input name="url" type="url" placeholder="https://example.com" required></label>
-      <label>Sekunden<input name="duration_seconds" type="number" min="1" value="60" required></label>
+      <label>Sekunden<input name="duration_seconds" type="number" min="1" value="60" required>${durationPresets(60)}</label>
       <label>Scroll px/s<input name="scroll_speed" type="number" min="0" max="4000" value="0"></label>
       <label>Zoom %<input name="zoom" type="number" min="100" max="300" step="10" value="100"></label>
       <label>Farbschema<select name="color_scheme"><option value="auto">Automatisch</option><option value="light">Hell</option><option value="dark">Dunkel</option></select></label>
@@ -357,7 +413,7 @@ function enqueueFields(files) {
   return `<div class="grid-2">
     <label>Name<input name="name" placeholder="Optional"></label>
     <label>Adresse<input name="url" type="url" placeholder="${image ? "https://…/bild.jpg" : "https://…/clip.mp4"}" required></label>
-    <label>Sekunden<input name="duration_seconds" type="number" min="1" value="${image ? "10" : ""}" placeholder="${image ? "" : "bis zum Ende"}"></label>
+    <label>Sekunden<input name="duration_seconds" type="number" min="1" value="${image ? "10" : ""}" placeholder="${image ? "" : "bis zum Ende"}">${durationPresets(image ? 10 : "")}</label>
     ${image ? `<label>Scroll px/s<input name="scroll_speed" type="number" min="0" max="4000" value="0"></label>` : ""}
   </div>
   <label class="check"><input type="checkbox" name="fit_screen" ${image ? "checked" : ""}> An Auflösung anpassen</label>
@@ -443,7 +499,9 @@ function settingsTab() {
     </form>`;
   return `${power}${splash}<form class="card composer" id="rename-form"><label>Name<input name="name" value="${esc(device.name)}" required></label><button type="submit">Speichern</button></form>
     ${isAdmin() ? `<form class="card composer" id="move-form"><label>Mandant wechseln<select name="tenant_id">${tenantOptions(device.tenant_id)}</select></label><button class="ghost" type="submit">Verschieben</button></form>
-    <section class="card panel"><div class="spread"><div><div class="title">Geräte-Update</div><p class="muted">Der Pi zieht das GitHub-Repository und startet neu. Der Verlauf erscheint hier, danach lädt die Seite neu.</p></div><button id="device-update" type="button">Update</button></div>
+    <section class="card panel"><div class="spread"><div><div class="title">Geräte-Update</div><p class="muted">Sofort, oder zu einem Zeitpunkt. Offline wartet der Plan, bis der Pi wieder da ist.</p></div><button id="device-update" type="button">Jetzt</button></div>
+    <form class="row" id="device-schedule"><label>Zeitpunkt<input type="datetime-local" name="run_at" required value="${localInput(device.update_at)}"></label><button class="ghost" type="submit">Planen</button>${device.update_at ? `<button class="ghost" id="device-schedule-clear" type="button">Planung löschen</button>` : ""}</form>
+    ${device.update_at ? `<p class="muted">Geplant für ${esc(when(device.update_at))}.</p>` : ""}
     <p class="muted" id="device-update-state">${esc(updateStatusText(state.deviceUpdateState, false))}</p>
     <pre class="log" id="device-update-log">${esc(state.deviceLog || "")}</pre></section>
     <section class="card panel"><div class="spread"><div><div class="title">Gerät entfernen</div><p class="muted">Das Gerät verschwindet aus der Cloud. Ein erneuter Adopt ist danach nötig.</p></div><button class="danger" id="forget" type="button">${state.confirm === "forget" ? "Wirklich entfernen" : "Gerät entfernen"}</button></div></section>` : `<p class="muted">Updates startet nur ein Cloud-Admin.</p>`}
@@ -457,20 +515,55 @@ function tenantsHtml() {
     <table><thead><tr><th>Name</th><th>Geräte</th><th>Benutzer</th><th></th></tr></thead><tbody>${rows || '<tr><td colspan="4" class="muted">Noch keine Mandanten.</td></tr>'}</tbody></table>`;
 }
 
-function usersHtml() {
-  const rows = state.users.map((user) => `<tr><td>${esc(user.name)}</td><td>${esc(user.email)}</td><td>${esc(roleLabel(user.role))}</td><td>${esc(user.tenant_name || "–")}</td><td>${user.id === state.user.id ? "" : `<button class="danger" data-action="delete-user" data-id="${esc(user.id)}">Löschen</button>`}</td></tr>`).join("");
+function roleOptions(selected) {
   const roles = isAdmin()
-    ? '<option value="superadmin">Cloud-Admin</option><option value="tenant_admin">Mandanten-Admin</option><option value="tenant_user">Mandanten-Benutzer</option>'
-    : '<option value="tenant_admin">Mandanten-Admin</option><option value="tenant_user">Mandanten-Benutzer</option>';
-  return `<div class="page-head"><div><h1>Benutzer</h1><p class="muted">Mandanten sehen nur ihre eigenen Geräte.</p></div></div>
+    ? [["superadmin", "Cloud-Admin"], ["tenant_admin", "Mandanten-Admin"], ["tenant_user", "Mandanten-Benutzer"]]
+    : [["tenant_admin", "Mandanten-Admin"], ["tenant_user", "Mandanten-Benutzer"]];
+  return roles.map(([id, label]) => `<option value="${id}" ${id === selected ? "selected" : ""}>${label}</option>`).join("");
+}
+
+function userEditHtml() {
+  const user = state.users.find((item) => item.id === state.editUser);
+  if (!user) return "";
+  return `<form class="card composer" id="user-edit"><h2>${esc(user.name)} bearbeiten</h2><div class="grid-2">
+      <label>Name<input name="name" value="${esc(user.name)}" required></label>
+      <label>E-Mail<input name="email" type="email" value="${esc(user.email)}" required></label>
+      <label>Neues Passwort<input name="password" type="password" minlength="8" placeholder="leer lassen"></label>
+      <label>Rolle<select name="role">${roleOptions(user.role)}</select></label>
+      ${isAdmin() ? `<label>Mandant<select name="tenant_id"><option value="">Kein Mandant</option>${tenantOptions(user.tenant_id || "")}</select></label>` : ""}
+    </div>
+    <div class="row"><button type="submit">Speichern</button><button class="ghost" id="user-edit-cancel" type="button">Abbrechen</button>
+      ${user.totp_enabled ? `<button class="ghost" id="user-totp-reset" type="button">2FA zurücksetzen</button>` : ""}
+    </div></form>`;
+}
+
+function usersHtml() {
+  const rows = state.users.map((user) => `<tr><td>${esc(user.name)}</td><td>${esc(user.email)}</td><td>${esc(roleLabel(user.role))}${user.totp_enabled ? ' <span class="badge ok">2FA</span>' : ""}</td><td>${esc(user.tenant_name || "–")}</td><td class="actions"><button class="ghost" data-action="edit-user" data-id="${esc(user.id)}">Bearbeiten</button>${user.id === state.user.id ? "" : `<button class="danger" data-action="delete-user" data-id="${esc(user.id)}">Löschen</button>`}</td></tr>`).join("");
+  return `<div class="page-head"><div><h1>Benutzer</h1><p class="muted">Angelegt, später geändert, und 2FA lässt sich hier zurücksetzen.</p></div></div>
     <form class="card composer" id="user-form"><div class="grid-2">
       <label>Name<input name="name" required></label>
       <label>E-Mail<input name="email" type="email" required></label>
       <label>Passwort<input name="password" type="password" minlength="8" required></label>
-      <label>Rolle<select name="role">${roles}</select></label>
+      <label>Rolle<select name="role">${roleOptions("tenant_user")}</select></label>
       ${isAdmin() ? `<label>Mandant<select name="tenant_id"><option value="">Kein Mandant</option>${tenantOptions("")}</select></label>` : ""}
     </div><button type="submit">Benutzer anlegen</button></form>
+    ${userEditHtml()}
     <table><thead><tr><th>Name</th><th>E-Mail</th><th>Rolle</th><th>Mandant</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+function accountHtml() {
+  const user = state.user || {};
+  const setup = state.totpSetup;
+  const codes = state.recoveryCodes;
+  const setupBlock = setup
+    ? `<form class="card composer" id="totp-confirm"><h2>Code bestätigen</h2><p class="muted">In der Authenticator-App den Schlüssel eintragen. Der Name ist HiBit Signage.</p><p class="secret">${esc(setup.secret)}</p><button class="ghost" id="totp-copy" type="button">Schlüssel kopieren</button><label>Code aus der App<input name="code" inputmode="numeric" autocomplete="one-time-code" required></label><button type="submit">Aktivieren</button></form>`
+    : user.totp_enabled
+      ? `<form class="card composer" id="totp-disable"><h2>2FA ist aktiv</h2><p class="muted">Zum Abschalten Passwort und einen gültigen Code.</p><div class="grid-2"><label>Passwort<input name="password" type="password" required></label><label>Code<input name="code" inputmode="numeric" autocomplete="one-time-code" required></label></div><button class="danger" type="submit">2FA abschalten</button></form>`
+      : `<section class="card panel"><div class="spread"><div><div class="title">Zwei-Faktor-Anmeldung</div><p class="muted">Ein Code aus einer Authenticator-App, zusätzlich zum Passwort.</p></div><button id="totp-start" type="button">Einrichten</button></div></section>`;
+  const recovery = codes ? `<section class="card panel"><h2>Wiederherstellungscodes</h2><p class="muted">Jeder Code gilt einmal. Sie werden nur jetzt angezeigt.</p><pre class="secret">${esc(codes.join("\n"))}</pre><button class="ghost" id="recovery-done" type="button">Verstanden</button></section>` : "";
+  return `<div class="page-head"><div><h1>Konto</h1><p class="muted">${esc(user.email || "")} · ${esc(roleLabel(user.role))}</p></div></div>
+    ${recovery}${setupBlock}
+    <form class="card composer" id="password-form"><h2>Passwort</h2><div class="grid-2"><label>Aktuell<input name="current" type="password" required></label><label>Neu<input name="next" type="password" minlength="8" required></label></div><button type="submit">Ändern</button></form>`;
 }
 
 function keysHtml() {
@@ -489,10 +582,11 @@ function systemHtml() {
   const info = state.system || {};
   return `<div class="page-head"><div><h1>Cloud-System</h1><p class="muted">Version ${esc(info.version || "")} ${info.commit ? "· " + esc(info.commit) : ""}</p></div></div>
     <article class="card stat"><span class="muted">Speicher frei</span><b>${sizeLabel(info.disk_free)}</b></article>
-    <section class="card panel"><div class="spread"><div><div class="title">Cloud aus GitHub updaten</div><p class="muted">Nur für Cloud-Admins. Mandanten sehen diesen Schalter nicht. Der Verlauf erscheint hier, danach lädt die Seite neu.</p></div><button id="cloud-update" type="button">Update</button></div>
+    <section class="card panel"><div class="spread"><div><div class="title">Cloud aus GitHub updaten</div><p class="muted">Sofort, oder zu einem Zeitpunkt. Das Konto mit Passwort und 2FA liegt unter Konto.</p></div><button id="cloud-update" type="button">Jetzt</button></div>
+    <form class="row" id="cloud-schedule"><label>Zeitpunkt<input type="datetime-local" name="run_at" required value="${localInput(info.update_at)}"></label><button class="ghost" type="submit">Planen</button>${info.update_at ? `<button class="ghost" id="cloud-schedule-clear" type="button">Planung löschen</button>` : ""}</form>
+    ${info.update_at ? `<p class="muted">Geplant für ${esc(when(info.update_at))}.</p>` : ""}
     <p class="muted" id="update-state">${esc(updateStatusText(state.updateState, false))}</p>
-    <pre class="log" id="update-log">${esc(state.log || "")}</pre></section>
-    <form class="card composer" id="password-form"><h2>Eigenes Passwort</h2><div class="grid-2"><label>Aktuell<input name="current" type="password" required></label><label>Neu<input name="next" type="password" minlength="8" required></label></div><button type="submit">Ändern</button></form>`;
+    <pre class="log" id="update-log">${esc(state.log || "")}</pre></section>`;
 }
 
 function render() {
@@ -503,12 +597,17 @@ function render() {
   const app = document.getElementById("app");
   if (!state.user) {
     app.innerHTML = loginHtml();
-    document.getElementById("login-form").addEventListener("submit", onLogin);
+    const login = document.getElementById("login-form");
+    if (login) login.addEventListener("submit", onLogin);
+    const totp = document.getElementById("totp-form");
+    if (totp) totp.addEventListener("submit", onTotp);
+    const back = document.getElementById("totp-back");
+    if (back) back.addEventListener("click", () => { state.ticket = ""; render(); });
     return;
   }
   const current = route();
   if (!(current.name === "device" && current.tab === "settings")) state.poweroff = false;
-  const pages = { dashboard: dashboardHtml, devices: devicesHtml, device: deviceHtml, tenants: tenantsHtml, users: usersHtml, keys: keysHtml, system: systemHtml };
+  const pages = { dashboard: dashboardHtml, devices: devicesHtml, device: deviceHtml, tenants: tenantsHtml, users: usersHtml, keys: keysHtml, account: accountHtml, system: systemHtml };
   const page = pages[current.name] || dashboardHtml;
   app.innerHTML = layout(page());
   document.getElementById("logout").addEventListener("click", async () => {
@@ -523,11 +622,32 @@ async function onLogin(event) {
   event.preventDefault();
   const form = event.currentTarget;
   try {
-    state.user = await api("/api/login", { method: "POST", body: { email: form.email.value, password: form.password.value } });
+    const result = await api("/api/login", { method: "POST", body: { email: form.email.value, password: form.password.value } });
+    if (result && result.totp_required) {
+      state.ticket = result.ticket;
+      render();
+      return;
+    }
+    state.ticket = "";
+    state.user = result;
     location.hash = "#/dashboard";
     await show();
   } catch (error) {
     document.getElementById("login-error").textContent = error.message;
+  }
+}
+
+async function onTotp(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  try {
+    state.user = await api("/api/login/totp", { method: "POST", body: { ticket: state.ticket, code: form.code.value } });
+    state.ticket = "";
+    location.hash = "#/dashboard";
+    await show();
+  } catch (error) {
+    const target = document.getElementById("login-error");
+    if (target) target.textContent = error.message;
   }
 }
 
@@ -553,6 +673,7 @@ async function load() {
     state.keys = (await api("/api/keys")).keys;
     state.tenants = (await api("/api/tenants")).tenants;
   }
+  if (current.name === "account") state.user = await api("/api/me");
   if (current.name === "system") {
     state.system = await api("/api/system");
     try {
@@ -703,6 +824,7 @@ function bind(current) {
   if (current.name === "tenants") bindTenants();
   if (current.name === "users") bindUsers();
   if (current.name === "keys") bindKeys();
+  if (current.name === "account") bindAccount();
   if (current.name === "system") bindSystem();
 }
 
@@ -710,6 +832,13 @@ function bindQueue() {
   const form = document.getElementById("enqueue-form");
   if (!form) return;
   form.addEventListener("click", (event) => {
+    const preset = event.target.closest("[data-preset]");
+    if (preset) {
+      const input = form.querySelector("[name=duration_seconds]");
+      if (input) input.value = preset.dataset.preset;
+      form.querySelectorAll("[data-preset]").forEach((item) => item.classList.toggle("active", item === preset));
+      return;
+    }
     const button = event.target.closest("[data-mode]");
     if (!button) return;
     state.addMode = button.dataset.mode;
@@ -965,6 +1094,36 @@ function bindSettings() {
     });
     loadDeviceLog();
   }
+  const schedule = document.getElementById("device-schedule");
+  if (schedule) {
+    schedule.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const runAt = new Date(schedule.run_at.value);
+      if (Number.isNaN(runAt.getTime())) {
+        toast("Der Zeitpunkt ist ungültig", true);
+        return;
+      }
+      try {
+        await api(`/api/devices/${deviceId()}/update-schedule`, { method: "POST", body: { run_at: runAt.toISOString() } });
+        toast("Update geplant");
+        await show();
+      } catch (error) {
+        toast(error.message, true);
+      }
+    });
+  }
+  const clearSchedule = document.getElementById("device-schedule-clear");
+  if (clearSchedule) {
+    clearSchedule.addEventListener("click", async () => {
+      try {
+        await api(`/api/devices/${deviceId()}/update-schedule`, { method: "DELETE" });
+        toast("Planung gelöscht");
+        await show();
+      } catch (error) {
+        toast(error.message, true);
+      }
+    });
+  }
   const reboot = document.getElementById("reboot");
   if (reboot) {
     reboot.addEventListener("click", async () => {
@@ -1053,16 +1212,131 @@ function bindUsers() {
       toast(error.message, true);
     }
   });
+  const edit = document.getElementById("user-edit");
+  if (edit) {
+    edit.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const body = { name: edit.name.value, email: edit.email.value, role: edit.role.value, tenant_id: edit.tenant_id ? edit.tenant_id.value : null };
+      if (edit.password.value) body.password = edit.password.value;
+      try {
+        await api(`/api/users/${state.editUser}`, { method: "PATCH", body });
+        state.editUser = "";
+        toast("Benutzer gespeichert");
+        await show();
+      } catch (error) {
+        toast(error.message, true);
+      }
+    });
+    document.getElementById("user-edit-cancel").addEventListener("click", () => {
+      state.editUser = "";
+      render();
+    });
+    const reset = document.getElementById("user-totp-reset");
+    if (reset) {
+      reset.addEventListener("click", async () => {
+        if (!confirm("2FA für diesen Benutzer zurücksetzen?")) return;
+        try {
+          await api(`/api/users/${state.editUser}/totp/reset`, { method: "POST", body: {} });
+          toast("2FA zurückgesetzt");
+          await show();
+        } catch (error) {
+          toast(error.message, true);
+        }
+      });
+    }
+  }
   document.querySelector("table").addEventListener("click", async (event) => {
     const button = event.target.closest("button");
     if (!button) return;
+    if (button.dataset.action === "edit-user") {
+      state.editUser = button.dataset.id;
+      render();
+      return;
+    }
     try {
       await api(`/api/users/${button.dataset.id}`, { method: "DELETE" });
+      if (state.editUser === button.dataset.id) state.editUser = "";
       await show();
     } catch (error) {
       toast(error.message, true);
     }
   });
+}
+
+function bindPassword(form) {
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      await api("/api/me/password", { method: "POST", body: { current: form.current.value, next: form.next.value } });
+      form.reset();
+      toast("Passwort geändert");
+    } catch (error) {
+      toast(error.message, true);
+    }
+  });
+}
+
+function bindAccount() {
+  bindPassword(document.getElementById("password-form"));
+  const start = document.getElementById("totp-start");
+  if (start) {
+    start.addEventListener("click", async () => {
+      try {
+        state.totpSetup = await api("/api/me/totp/start", { method: "POST", body: {} });
+        render();
+      } catch (error) {
+        toast(error.message, true);
+      }
+    });
+  }
+  const copy = document.getElementById("totp-copy");
+  if (copy && state.totpSetup) {
+    copy.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(state.totpSetup.secret);
+        toast("Schlüssel kopiert");
+      } catch (error) {
+        toast(state.totpSetup.secret);
+      }
+    });
+  }
+  const confirmForm = document.getElementById("totp-confirm");
+  if (confirmForm) {
+    confirmForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      try {
+        const result = await api("/api/me/totp/confirm", { method: "POST", body: { code: confirmForm.code.value } });
+        state.totpSetup = null;
+        state.recoveryCodes = result.recovery_codes || [];
+        state.user.totp_enabled = true;
+        toast("2FA ist aktiv");
+        render();
+      } catch (error) {
+        toast(error.message, true);
+      }
+    });
+  }
+  const disable = document.getElementById("totp-disable");
+  if (disable) {
+    disable.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      try {
+        await api("/api/me/totp/disable", { method: "POST", body: { password: disable.password.value, code: disable.code.value } });
+        state.user.totp_enabled = false;
+        toast("2FA abgeschaltet");
+        await show();
+      } catch (error) {
+        toast(error.message, true);
+      }
+    });
+  }
+  const done = document.getElementById("recovery-done");
+  if (done) {
+    done.addEventListener("click", () => {
+      state.recoveryCodes = null;
+      render();
+    });
+  }
 }
 
 function bindKeys() {
@@ -1156,17 +1430,36 @@ function bindSystem() {
       });
     }
   }
-  document.getElementById("password-form").addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const form = event.currentTarget;
-    try {
-      await api("/api/me/password", { method: "POST", body: { current: form.current.value, next: form.next.value } });
-      form.reset();
-      toast("Passwort geändert");
-    } catch (error) {
-      toast(error.message, true);
-    }
-  });
+  const schedule = document.getElementById("cloud-schedule");
+  if (schedule) {
+    schedule.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const runAt = new Date(schedule.run_at.value);
+      if (Number.isNaN(runAt.getTime())) {
+        toast("Der Zeitpunkt ist ungültig", true);
+        return;
+      }
+      try {
+        await api("/api/system/update-schedule", { method: "POST", body: { run_at: runAt.toISOString() } });
+        toast("Update geplant");
+        await show();
+      } catch (error) {
+        toast(error.message, true);
+      }
+    });
+  }
+  const clearSchedule = document.getElementById("cloud-schedule-clear");
+  if (clearSchedule) {
+    clearSchedule.addEventListener("click", async () => {
+      try {
+        await api("/api/system/update-schedule", { method: "DELETE" });
+        toast("Planung gelöscht");
+        await show();
+      } catch (error) {
+        toast(error.message, true);
+      }
+    });
+  }
 }
 
 document.addEventListener("click", () => {

@@ -13,6 +13,7 @@ import sys
 import time
 import uuid
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -182,6 +183,7 @@ def _summary(device: dict) -> dict:
         "online": hub.online(device["id"]),
         "created_at": device.get("created_at"),
         "hardware_id": device.get("hardware_id") or "",
+        "update_at": (db.job_for("device-update", device["id"]) or {}).get("run_at"),
     }
 
 
@@ -204,13 +206,47 @@ async def _push(device_id: str) -> None:
     await hub.push_state(device_id)
 
 
+def _when(value) -> str:
+    text = str(value or "").strip()
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        moment = datetime.fromisoformat(text)
+    except ValueError as exc:
+        raise HTTPException(400, "Der Zeitpunkt ist ungültig.") from exc
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    moment = moment.astimezone(timezone.utc).replace(microsecond=0)
+    if moment < datetime.now(timezone.utc) - timedelta(minutes=2):
+        raise HTTPException(400, "Der Zeitpunkt liegt in der Vergangenheit.")
+    return moment.isoformat()
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     db.init()
     _created, secret = db.ensure_admin(os.environ.get("HIBIT_ADMIN_EMAIL"), os.environ.get("HIBIT_ADMIN_PASSWORD"), os.environ.get("HIBIT_ADMIN_NAME"))
     if secret:
         print(f"HIBIT_ADMIN_CREATED {(os.environ.get('HIBIT_ADMIN_EMAIL') or 'admin@hibit.local')} {secret}", flush=True)
-    yield
+    stop = asyncio.Event()
+
+    async def scheduled() -> None:
+        while not stop.is_set():
+            try:
+                await hub.dispatch_updates()
+            except Exception:
+                log.exception("Geplante Updates")
+            try:
+                await asyncio.wait_for(stop.wait(), 20)
+            except asyncio.TimeoutError:
+                pass
+
+    task = asyncio.create_task(scheduled())
+    try:
+        yield
+    finally:
+        stop.set()
+        task.cancel()
 
 
 app = FastAPI(title="HiBit Signage Cloud", version=version(), docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
@@ -223,7 +259,7 @@ async def guard(request: Request, call_next):
         return await call_next(request)
     if request.method == "GET" and path == "/api/health":
         return await call_next(request)
-    if request.method == "POST" and path == "/api/login":
+    if request.method == "POST" and path in {"/api/login", "/api/login/totp"}:
         return await call_next(request)
     if path.startswith("/api/"):
         user = db.user_for_token(request.cookies.get(COOKIE, ""))
@@ -286,6 +322,37 @@ async def login(request: Request):
         _FAILS[ip] = recent
         raise HTTPException(401, "E-Mail oder Passwort ist falsch.")
     _FAILS.pop(ip, None)
+    if user.get("totp_enabled"):
+        return {"totp_required": True, "ticket": db.create_ticket(user["id"])}
+    token = db.create_session(user["id"])
+    response = JSONResponse(db.public_user(user))
+    response.set_cookie(COOKIE, token, httponly=True, samesite="lax", max_age=14 * 24 * 3600, secure=_cookie_secure(request), path="/")
+    return response
+
+
+@app.post("/api/login/totp")
+async def login_totp(request: Request):
+    ip = _client_ip(request)
+    now = time.time()
+    recent = [stamp for stamp in _FAILS.get(ip, []) if now - stamp < 600]
+    if len(recent) >= 8:
+        raise HTTPException(429, "Zu viele Versuche. Bitte kurz warten.")
+    if not _origin_ok(request):
+        raise HTTPException(403, "Origin abgelehnt")
+    data = await _json(request)
+    ticket = str(data.get("ticket") or "")
+    user = db.ticket_user(ticket)
+    if not user or not user.get("totp_enabled"):
+        raise HTTPException(401, "Die Anmeldung ist abgelaufen. Bitte erneut anmelden.")
+    code = str(data.get("code") or "")
+    ok = security.totp_valid(user.get("totp_secret") or "", code) or db.consume_recovery(user["id"], code)
+    if not ok:
+        db.ticket_failed(ticket)
+        recent.append(now)
+        _FAILS[ip] = recent
+        raise HTTPException(400, "Der Code ist falsch.")
+    _FAILS.pop(ip, None)
+    db.delete_ticket(ticket)
     token = db.create_session(user["id"])
     response = JSONResponse(db.public_user(user))
     response.set_cookie(COOKIE, token, httponly=True, samesite="lax", max_age=14 * 24 * 3600, secure=_cookie_secure(request), path="/")
@@ -315,6 +382,47 @@ async def change_password(request: Request):
     if not security.verify_password(str(data.get("current") or ""), user["password_hash"]):
         raise HTTPException(400, "Das aktuelle Passwort ist falsch.")
     db.set_password(user["id"], nxt)
+    return {"ok": True}
+
+
+@app.post("/api/me/totp/start")
+def totp_start(request: Request):
+    user = request.state.user
+    if user.get("totp_enabled"):
+        raise HTTPException(400, "2FA ist bereits aktiv.")
+    secret = security.new_totp_secret()
+    db.set_totp_pending(user["id"], secret)
+    return {"secret": secret, "otpauth": security.otpauth_uri(secret, user["email"])}
+
+
+@app.post("/api/me/totp/confirm")
+async def totp_confirm(request: Request):
+    user = request.state.user
+    if user.get("totp_enabled"):
+        raise HTTPException(400, "2FA ist bereits aktiv.")
+    secret = db.totp_pending(user["id"])
+    if not secret:
+        raise HTTPException(400, "Bitte 2FA zuerst einrichten.")
+    data = await _json(request)
+    if not security.totp_valid(secret, str(data.get("code") or "")):
+        raise HTTPException(400, "Der Code ist falsch.")
+    codes = security.new_recovery_codes()
+    db.enable_totp(user["id"], secret, codes)
+    return {"ok": True, "recovery_codes": codes}
+
+
+@app.post("/api/me/totp/disable")
+async def totp_disable(request: Request):
+    user = db.user_by_id(request.state.user["id"])
+    if not user or not user.get("totp_enabled"):
+        raise HTTPException(400, "2FA ist nicht aktiv.")
+    data = await _json(request)
+    if not security.verify_password(str(data.get("password") or ""), user["password_hash"]):
+        raise HTTPException(400, "Das Passwort ist falsch.")
+    code = str(data.get("code") or "")
+    if not (security.totp_valid(user.get("totp_secret") or "", code) or db.consume_recovery(user["id"], code)):
+        raise HTTPException(400, "Der Code ist falsch.")
+    db.disable_totp(user["id"])
     return {"ok": True}
 
 
@@ -488,6 +596,20 @@ def users_delete(user_id: str, request: Request):
     if target["role"] == "superadmin" and db.count_role("superadmin") <= 1:
         raise HTTPException(400, "Der letzte Cloud-Admin kann nicht gelöscht werden.")
     db.delete_user(user_id)
+    return {"ok": True}
+
+
+@app.post("/api/users/{user_id}/totp/reset")
+def users_totp_reset(user_id: str, request: Request):
+    actor = request.state.user
+    if actor["role"] == "tenant_user":
+        raise HTTPException(403, "Keine Berechtigung für die Benutzerverwaltung.")
+    target = db.user_by_id(user_id)
+    if not target:
+        raise HTTPException(404, "Benutzer nicht gefunden")
+    if actor["role"] == "tenant_admin" and target.get("tenant_id") != actor.get("tenant_id"):
+        raise HTTPException(404, "Benutzer nicht gefunden")
+    db.disable_totp(user_id)
     return {"ok": True}
 
 
@@ -1040,6 +1162,25 @@ async def device_update(device_id: str, request: Request):
     return {"ok": True, "message": result.get("detail") or "Update gestartet."}
 
 
+@app.post("/api/devices/{device_id}/update-schedule")
+async def device_update_schedule(device_id: str, request: Request):
+    if request.state.user["role"] != "superadmin":
+        raise HTTPException(403, "Nur Cloud-Admins dürfen Geräte updaten.")
+    _require_device(request.state.user, device_id, adopted=True)
+    data = await _json(request)
+    job = db.schedule_job("device-update", device_id, _when(data.get("run_at")))
+    return {"ok": True, "run_at": job["run_at"]}
+
+
+@app.delete("/api/devices/{device_id}/update-schedule")
+def device_update_schedule_clear(device_id: str, request: Request):
+    if request.state.user["role"] != "superadmin":
+        raise HTTPException(403, "Nur Cloud-Admins dürfen Geräte updaten.")
+    _require_device(request.state.user, device_id, adopted=True)
+    db.cancel_job("device-update", device_id)
+    return {"ok": True}
+
+
 @app.get("/api/devices/{device_id}/update-log")
 async def device_update_log(device_id: str, request: Request):
     if request.state.user["role"] != "superadmin":
@@ -1093,6 +1234,7 @@ def system_info(request: Request):
         "disk_free": usage.free,
         "disk_total": usage.total,
         "update_ready": updater.script_path().exists(),
+        "update_at": (db.job_for("cloud-update", "") or {}).get("run_at"),
     }
 
 
@@ -1105,6 +1247,23 @@ def system_update(request: Request):
     except RuntimeError as exc:
         raise HTTPException(400, str(exc)) from exc
     return {"ok": True, "message": message}
+
+
+@app.post("/api/system/update-schedule")
+async def system_update_schedule(request: Request):
+    if request.state.user["role"] != "superadmin":
+        raise HTTPException(403, "Nur Cloud-Admins dürfen die Cloud updaten.")
+    data = await _json(request)
+    job = db.schedule_job("cloud-update", "", _when(data.get("run_at")))
+    return {"ok": True, "run_at": job["run_at"]}
+
+
+@app.delete("/api/system/update-schedule")
+def system_update_schedule_clear(request: Request):
+    if request.state.user["role"] != "superadmin":
+        raise HTTPException(403, "Nur Cloud-Admins dürfen die Cloud updaten.")
+    db.cancel_job("cloud-update", "")
+    return {"ok": True}
 
 
 @app.get("/api/system/update-log")

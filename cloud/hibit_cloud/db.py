@@ -98,6 +98,38 @@ def init() -> None:
             );
             """
         )
+        _migrate(conn)
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    cols = {row["name"] for row in conn.execute("PRAGMA table_info(users)")}
+    for name, ddl in (
+        ("totp_secret", "TEXT"),
+        ("totp_pending", "TEXT"),
+        ("totp_enabled", "INTEGER NOT NULL DEFAULT 0"),
+        ("recovery_hashes", "TEXT"),
+    ):
+        if name not in cols:
+            conn.execute(f"ALTER TABLE users ADD COLUMN {name} {ddl}")
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS login_tickets (
+            token_hash TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            attempts INTEGER NOT NULL DEFAULT 0,
+            expires_at TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS jobs (
+            id TEXT PRIMARY KEY,
+            kind TEXT NOT NULL,
+            target_id TEXT NOT NULL DEFAULT '',
+            run_at TEXT NOT NULL,
+            leased_until TEXT,
+            created_at TEXT NOT NULL
+        );
+        """
+    )
 
 
 def _slug(name: str) -> str:
@@ -156,6 +188,7 @@ def public_user(user: dict | None) -> dict | None:
         "role": user["role"],
         "tenant_id": user.get("tenant_id"),
         "tenant_name": tenant["name"] if tenant else None,
+        "totp_enabled": bool(user.get("totp_enabled")),
     }
 
 
@@ -240,6 +273,179 @@ def user_for_token(token: str) -> dict | None:
             (security.token_hash(token), utcnow()),
         ).fetchone()
         return dict(row) if row else None
+
+
+def set_totp_pending(user_id: str, secret: str) -> None:
+    with _LOCK, connect() as conn:
+        conn.execute("UPDATE users SET totp_pending = ? WHERE id = ?", (secret, user_id))
+
+
+def totp_pending(user_id: str) -> str:
+    user = user_by_id(user_id)
+    return (user or {}).get("totp_pending") or ""
+
+
+def enable_totp(user_id: str, secret: str, codes: list[str]) -> None:
+    hashes = json.dumps([security.recovery_hash(code) for code in codes])
+    with _LOCK, connect() as conn:
+        conn.execute(
+            """
+            UPDATE users
+            SET totp_secret = ?, totp_pending = NULL, totp_enabled = 1, recovery_hashes = ?
+            WHERE id = ?
+            """,
+            (secret, hashes, user_id),
+        )
+
+
+def disable_totp(user_id: str) -> None:
+    with _LOCK, connect() as conn:
+        conn.execute(
+            """
+            UPDATE users
+            SET totp_secret = NULL, totp_pending = NULL, totp_enabled = 0, recovery_hashes = NULL
+            WHERE id = ?
+            """,
+            (user_id,),
+        )
+
+
+def recovery_codes(user_id: str) -> list[str]:
+    user = user_by_id(user_id) or {}
+    try:
+        values = json.loads(user.get("recovery_hashes") or "[]")
+    except json.JSONDecodeError:
+        return []
+    return [item for item in values if isinstance(item, str)]
+
+
+def consume_recovery(user_id: str, code: str) -> bool:
+    digest = security.recovery_hash(code)
+    hashes = recovery_codes(user_id)
+    kept = []
+    matched = False
+    for item in hashes:
+        if not matched and security.hashes_equal(item, digest):
+            matched = True
+            continue
+        kept.append(item)
+    if not matched:
+        return False
+    with _LOCK, connect() as conn:
+        conn.execute("UPDATE users SET recovery_hashes = ? WHERE id = ?", (json.dumps(kept), user_id))
+    return True
+
+
+def create_ticket(user_id: str) -> str:
+    token = security.new_token()
+    expires = (datetime.now(timezone.utc) + timedelta(minutes=5)).replace(microsecond=0).isoformat()
+    with _LOCK, connect() as conn:
+        conn.execute("DELETE FROM login_tickets WHERE expires_at < ?", (utcnow(),))
+        conn.execute(
+            "INSERT INTO login_tickets (token_hash, user_id, attempts, expires_at, created_at) VALUES (?, ?, 0, ?, ?)",
+            (security.token_hash(token), user_id, expires, utcnow()),
+        )
+    return token
+
+
+def ticket_user(token: str) -> dict | None:
+    if not token:
+        return None
+    with _LOCK, connect() as conn:
+        row = conn.execute(
+            """
+            SELECT users.* FROM login_tickets
+            JOIN users ON users.id = login_tickets.user_id
+            WHERE login_tickets.token_hash = ? AND login_tickets.expires_at >= ?
+            """,
+            (security.token_hash(token), utcnow()),
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def ticket_failed(token: str) -> None:
+    if not token:
+        return
+    digest = security.token_hash(token)
+    with _LOCK, connect() as conn:
+        conn.execute("UPDATE login_tickets SET attempts = attempts + 1 WHERE token_hash = ?", (digest,))
+        conn.execute("DELETE FROM login_tickets WHERE token_hash = ? AND attempts >= 5", (digest,))
+
+
+def delete_ticket(token: str) -> None:
+    if not token:
+        return
+    with _LOCK, connect() as conn:
+        conn.execute("DELETE FROM login_tickets WHERE token_hash = ?", (security.token_hash(token),))
+
+
+def schedule_job(kind: str, target_id: str, run_at: str) -> dict:
+    target = target_id or ""
+    with _LOCK, connect() as conn:
+        conn.execute("DELETE FROM jobs WHERE kind = ? AND IFNULL(target_id, '') = ?", (kind, target))
+        job_id = str(uuid.uuid4())
+        conn.execute(
+            """
+            INSERT INTO jobs (id, kind, target_id, run_at, leased_until, created_at)
+            VALUES (?, ?, ?, ?, NULL, ?)
+            """,
+            (job_id, kind, target, run_at, utcnow()),
+        )
+        row = conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+        return dict(row)
+
+
+def job_for(kind: str, target_id: str) -> dict | None:
+    with _LOCK, connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM jobs WHERE kind = ? AND IFNULL(target_id, '') = ?",
+            (kind, target_id or ""),
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def cancel_job(kind: str, target_id: str) -> None:
+    with _LOCK, connect() as conn:
+        conn.execute("DELETE FROM jobs WHERE kind = ? AND IFNULL(target_id, '') = ?", (kind, target_id or ""))
+
+
+def due_jobs() -> list[dict]:
+    now = utcnow()
+    with _LOCK, connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT * FROM jobs
+            WHERE run_at <= ? AND (leased_until IS NULL OR leased_until <= ?)
+            ORDER BY run_at
+            """,
+            (now, now),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+
+def lease_job(job_id: str, seconds: int = 180) -> bool:
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    until = (now + timedelta(seconds=seconds)).isoformat()
+    stamp = now.isoformat()
+    with _LOCK, connect() as conn:
+        cur = conn.execute(
+            """
+            UPDATE jobs SET leased_until = ?
+            WHERE id = ? AND run_at <= ? AND (leased_until IS NULL OR leased_until <= ?)
+            """,
+            (until, job_id, stamp, stamp),
+        )
+        return cur.rowcount == 1
+
+
+def release_job(job_id: str) -> None:
+    with _LOCK, connect() as conn:
+        conn.execute("UPDATE jobs SET leased_until = NULL WHERE id = ?", (job_id,))
+
+
+def delete_job(job_id: str) -> None:
+    with _LOCK, connect() as conn:
+        conn.execute("DELETE FROM jobs WHERE id = ?", (job_id,))
 
 
 def delete_session(token: str) -> None:

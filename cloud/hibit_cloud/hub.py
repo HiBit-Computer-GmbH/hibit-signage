@@ -5,11 +5,38 @@ import json
 import logging
 import uuid
 
-from hibit_cloud import db, security
+from hibit_cloud import db, security, updater
 from hibit_cloud.config import files_dir
 from hibit_cloud.validate import sanitize_state
 
 log = logging.getLogger("hibit.cloud.hub")
+
+
+def _whole(value) -> int | None:
+    try:
+        number = int(float(value))
+    except (TypeError, ValueError):
+        return None
+    if number < 0 or number > 10 * 365 * 24 * 3600:
+        return None
+    return number
+
+
+def runtime_from(msg: dict) -> dict:
+    load = str(msg.get("load") or "").strip()[:16]
+    if load and not load.replace(".", "", 1).isdigit():
+        load = ""
+    return {
+        "mounts": msg.get("mounts") or {},
+        "last_error": str(msg.get("last_error") or "")[:500],
+        "applied_revision": msg.get("applied_revision") or 0,
+        "dirty": bool(msg.get("dirty")),
+        "uptime_seconds": _whole(msg.get("uptime_seconds")),
+        "service_seconds": _whole(msg.get("service_seconds")),
+        "load": load,
+        "mem_total": _whole(msg.get("mem_total")),
+        "mem_available": _whole(msg.get("mem_available")),
+    }
 
 
 def _empty(state: dict) -> bool:
@@ -113,6 +140,35 @@ class Hub:
         )
         await self.send(device_id, {"type": "sync_request"})
 
+    async def dispatch_updates(self, only_device: str | None = None) -> None:
+        for job in db.due_jobs():
+            kind = job.get("kind")
+            target = job.get("target_id") or ""
+            if kind == "device-update":
+                if only_device and target != only_device:
+                    continue
+                if not self.online(target):
+                    continue
+                if not db.lease_job(job["id"]):
+                    continue
+                try:
+                    await self.request(target, {"type": "update"}, timeout=20)
+                except Exception as exc:
+                    log.warning("Geplantes Update für %s: %s", target, exc)
+                    db.release_job(job["id"])
+                    continue
+                db.delete_job(job["id"])
+            elif kind == "cloud-update" and only_device is None:
+                if not db.lease_job(job["id"]):
+                    continue
+                try:
+                    updater.launch()
+                except Exception as exc:
+                    log.warning("Geplantes Cloud-Update: %s", exc)
+                    db.release_job(job["id"])
+                    continue
+                db.delete_job(job["id"])
+
     async def request(self, device_id: str, message: dict, timeout: float = 25) -> dict:
         if device_id not in self.devices:
             raise RuntimeError("Gerät ist offline.")
@@ -174,11 +230,7 @@ class Hub:
                 )
         if not device:
             return None
-        runtime = {
-            "mounts": hello.get("mounts") or {},
-            "applied_revision": hello.get("applied_revision") or 0,
-            "dirty": bool(hello.get("dirty")),
-        }
+        runtime = runtime_from(hello)
         db.touch_device(
             device["id"],
             str(hello.get("hostname") or device.get("hostname") or ""),
@@ -243,12 +295,7 @@ class Hub:
             device = db.get_device(device_id)
             if not device:
                 return
-            runtime = {
-                "mounts": msg.get("mounts") or {},
-                "last_error": msg.get("last_error") or "",
-                "applied_revision": msg.get("applied_revision") or 0,
-                "dirty": bool(msg.get("dirty")),
-            }
+            runtime = runtime_from(msg)
             db.touch_device(
                 device_id,
                 str(msg.get("hostname") or device.get("hostname") or ""),
@@ -256,6 +303,7 @@ class Hub:
                 list(msg.get("ips") or []),
                 runtime,
             )
+            asyncio.create_task(self.dispatch_updates(device_id))
             applied = int(msg.get("applied_revision") or 0)
             fresh = db.get_device(device_id)
             if fresh and fresh["status"] == "adopted" and int(fresh["state_revision"] or 0) > applied:
