@@ -56,6 +56,7 @@ _BOOTSTRAP = """
   const REAL = __REAL__;
   const ORIGIN = location.origin;
   const FORCE = __SCHEME__;
+  window.__hibitProxy = true;
   function withScheme(value) {
     if (FORCE !== "dark" && FORCE !== "light") return value;
     try {
@@ -88,6 +89,31 @@ _BOOTSTRAP = """
     const path = abs.pathname.split("/").filter(Boolean).join("/");
     const base = scheme === "ws" || scheme === "wss" ? ORIGIN.replace(/^http/, "ws") : ORIGIN;
     return withScheme(base + "/player/site/" + scheme + "/" + abs.host + "/" + path + abs.search + abs.hash);
+  }
+  function visible(value) {
+    if (value == null) return value;
+    const raw = String(value);
+    if (!raw || /^(data:|blob:|javascript:|mailto:|tel:|about:|#)/i.test(raw)) return raw;
+    let abs;
+    let real;
+    try {
+      abs = new URL(raw, REAL);
+      real = new URL(REAL);
+    } catch (e) {
+      return proxied(raw);
+    }
+    if (abs.origin === ORIGIN && abs.pathname.indexOf("/player/site/") !== 0 && !playerPath(abs.pathname)) {
+      return (abs.pathname || "/") + abs.search + abs.hash;
+    }
+    if (abs.origin !== real.origin) return proxied(raw);
+    return (abs.pathname || "/") + abs.search + abs.hash;
+  }
+  function playerPath(pathname) {
+    return pathname === "/"
+      || pathname === "/player" || pathname.indexOf("/player/") === 0
+      || pathname === "/console" || pathname.indexOf("/console/") === 0
+      || pathname.indexOf("/api/") === 0
+      || pathname.indexOf("/media/") === 0;
   }
   try {
     Object.defineProperty(window, "top", { configurable: true, get: function () { return window; } });
@@ -176,12 +202,32 @@ _BOOTSTRAP = """
   if (window.HTMLFormElement) patch(HTMLFormElement.prototype, "action");
   const pushState = history.pushState;
   const replaceState = history.replaceState;
+  try {
+    const wanted = visible(REAL);
+    const now = location.pathname + location.search + location.hash;
+    if (wanted && wanted !== now) replaceState.call(history, history.state, "", wanted);
+  } catch (e) {}
   history.pushState = function (state, title, url) {
-    return pushState.call(this, state, title, url == null ? url : proxied(url));
+    return pushState.call(this, state, title, url == null ? url : visible(url));
   };
   history.replaceState = function (state, title, url) {
-    return replaceState.call(this, state, title, url == null ? url : proxied(url));
+    return replaceState.call(this, state, title, url == null ? url : visible(url));
   };
+  try {
+    const assign = Location.prototype.assign;
+    const replace = Location.prototype.replace;
+    Location.prototype.assign = function (url) { return assign.call(this, proxied(url)); };
+    Location.prototype.replace = function (url) { return replace.call(this, proxied(url)); };
+    const hrefDesc = Object.getOwnPropertyDescriptor(Location.prototype, "href");
+    if (hrefDesc && hrefDesc.set && hrefDesc.configurable) {
+      Object.defineProperty(Location.prototype, "href", {
+        configurable: true,
+        enumerable: hrefDesc.enumerable,
+        get: hrefDesc.get,
+        set: function (value) { hrefDesc.set.call(this, proxied(value)); }
+      });
+    }
+  } catch (e) {}
   window.open = function (url) {
     if (url) location.assign(proxied(url));
     return null;
@@ -190,6 +236,16 @@ _BOOTSTRAP = """
     window.navigation.addEventListener("navigate", function (event) {
       const url = event.destination && event.destination.url || "";
       if (!url || /^(about:|blob:|data:)/i.test(url)) return;
+      let dest = null;
+      try { dest = new URL(url); } catch (e) { return; }
+      if (dest.origin === ORIGIN && dest.pathname.indexOf("/player/site/") !== 0) {
+        if (!event.destination || event.destination.sameDocument !== false) return;
+        event.preventDefault();
+        if (playerPath(dest.pathname)) return;
+        const next = proxied(dest.pathname + dest.search + dest.hash);
+        if (next && next !== location.href) location.replace(next);
+        return;
+      }
       if (url.indexOf("/player/site/") !== -1) {
         const kept = withScheme(url);
         if (kept !== url) {

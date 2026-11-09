@@ -300,9 +300,11 @@ function play() {
     webClip.hidden = false;
     const show = () => {
       if (token !== generation) return;
-      let href = "";
-      try { href = frame.contentWindow.location.href; } catch (error) { return; }
-      if (!href.includes("/player/site/")) return;
+      try {
+        if (!frame.contentWindow || !frame.contentWindow.__hibitProxy) return;
+      } catch (error) {
+        return;
+      }
       window.setTimeout(() => {
         if (token !== generation) return;
         clearTimeout(timer);
