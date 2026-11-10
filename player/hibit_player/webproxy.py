@@ -12,19 +12,20 @@ import gzip
 import json
 import logging
 import re
+import os
 import threading
 import time
 import urllib.error
 import urllib.request
 import zlib
-from http.cookiejar import CookieJar
+from http.cookiejar import LWPCookieJar
 from urllib.parse import quote, unquote, urljoin, urlparse, urlsplit
 
 from fastapi import Request, WebSocket
 from fastapi.responses import HTMLResponse, RedirectResponse, Response, StreamingResponse
 
 from hibit_player import db
-from hibit_player.config import port
+from hibit_player.config import data_dir, port
 
 log = logging.getLogger("hibit.player.web")
 
@@ -32,7 +33,32 @@ _BROWSER = (
     "Mozilla/5.0 (X11; Linux aarch64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
 )
-_JAR = CookieJar()
+def _cookie_path():
+    return data_dir() / "web-cookies.txt"
+
+
+def _open_jar() -> LWPCookieJar:
+    path = _cookie_path()
+    jar = LWPCookieJar(str(path))
+    if path.is_file():
+        try:
+            jar.load(ignore_discard=True, ignore_expires=True)
+        except Exception:
+            log.warning("Gespeicherte Web-Cookies konnten nicht gelesen werden")
+    return jar
+
+
+def _save_cookies() -> None:
+    path = _cookie_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        _JAR.save(ignore_discard=True, ignore_expires=True)
+        os.chmod(path, 0o600)
+    except Exception:
+        log.debug("Web-Cookies konnten nicht gespeichert werden", exc_info=True)
+
+
+_JAR = _open_jar()
 _JAR_LOCK = threading.Lock()
 _EXTRA: dict[str, float] = {}
 _HOSTS: tuple[float, set[str]] = (0.0, set())
@@ -373,6 +399,7 @@ def reset_runtime() -> None:
     global _HOSTS
     with _JAR_LOCK:
         _JAR.clear()
+        _save_cookies()
         _EXTRA.clear()
         _HOSTS = (0.0, set())
 
@@ -612,6 +639,7 @@ def _fetch(method: str, target: str, headers: dict, body: bytes) -> Response:
             except Exception:
                 log.debug("Cookies konnten nicht gelesen werden", exc_info=True)
             response = exc
+        _save_cookies()
     if redirected is not None:
         return _redirect(redirected, target)
     status = getattr(response, "status", None) or getattr(response, "code", 200)

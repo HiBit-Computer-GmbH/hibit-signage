@@ -512,7 +512,7 @@ function networkHtml() {
   const options = connections.map((item) => `<option value="${esc(item.id)}" ${item.id === selected.id ? "selected" : ""}>${esc(networkLabel(item))}</option>`).join("");
   const ssids = (state.networkSsids || []).map((item) => `<option value="${esc(item.ssid)}"></option>`).join("");
   return `<form class="card composer" id="network-form">
-    <div class="spread"><div><h2>Netzwerk</h2><p class="muted">Adresse und WLAN dieses Pi. Nach dem Speichern wird die Verbindung neu aufgebaut, die IP kann sich ändern.</p></div><button class="ghost" id="network-reload" type="button">Aktualisieren</button></div>
+    <div class="spread"><div><h2>Netzwerk</h2><p class="muted">Adresse und WLAN dieses Pi. Nach dem Speichern wird die Verbindung neu aufgebaut. Trägt die Adresse nicht, kommt die bisherige nach einer Minute zurück.</p></div><button class="ghost" id="network-reload" type="button">Aktualisieren</button></div>
     <label>Hostname<input name="hostname" value="${esc(info.hostname || "")}" required></label>
     <label>Anschluss<select name="connection" id="network-connection">${options}</select></label>
     <div class="mode-menu" role="group" aria-label="Adressvergabe">

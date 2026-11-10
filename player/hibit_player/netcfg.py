@@ -5,9 +5,12 @@ import os
 import re
 import shutil
 import socket
+import sqlite3
 import subprocess
 import sys
 import time
+from pathlib import Path
+from urllib.parse import urlparse
 
 IPV4 = re.compile(r"^(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)$")
 HOST = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$")
@@ -146,6 +149,10 @@ def apply(data: dict) -> str:
     if clean["hostname"]:
         _check(["hostnamectl", "set-hostname", clean["hostname"]])
     uuid = clean["connection"]
+    try:
+        _export(uuid)
+    except (RuntimeError, OSError, subprocess.TimeoutExpired):
+        pass
     if clean["method"] == "auto":
         _nm(
             "connection", "modify", uuid,
@@ -168,7 +175,7 @@ def apply(data: dict) -> str:
             args.extend(["wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.psk", clean["psk"]])
         _nm(*args)
     _defer_up(uuid)
-    return "Gespeichert. Die Verbindung wird neu aufgebaut. Die Adresse kann sich ändern."
+    return "Gespeichert. Die Verbindung wird neu aufgebaut. Trägt die Adresse nicht, kommt die bisherige nach einer Minute zurück."
 
 
 def main() -> None:
@@ -207,16 +214,7 @@ def _connection(uuid: str) -> dict:
         "show",
         uuid,
     ).strip()
-    lines = text.splitlines()
-    if len(lines) >= 5:
-        fields = lines[:4] + [":".join(lines[4:])]
-    else:
-        fields = _split(text)
-    while len(fields) < 5:
-        fields.append("")
-    method, addresses, gateway, dns, ssid = fields[:5]
-    if len(fields) > 5:
-        ssid = ":".join(fields[4:])
+    method, addresses, gateway, dns, ssid = _fields(text, 5)
     return {
         "method": method.strip(),
         "addresses": addresses.strip(),
@@ -267,6 +265,20 @@ def _current_addrs() -> dict[str, str]:
     return found
 
 
+def _fields(text: str, count: int) -> list[str]:
+    lines = text.splitlines() or [""]
+    if len(lines) > 1 and ":" not in lines[0]:
+        while len(lines) < count:
+            lines.append("")
+        return lines[: count - 1] + ["\n".join(lines[count - 1 :])]
+    parts = _split("".join(lines))
+    while len(parts) < count:
+        parts.append("")
+    if len(parts) > count:
+        parts = parts[: count - 1] + [":".join(parts[count - 1 :])]
+    return parts
+
+
 def _split(line: str) -> list[str]:
     parts: list[str] = []
     buf: list[str] = []
@@ -303,6 +315,72 @@ def _check(args: list[str], timeout: int = 12) -> None:
         raise RuntimeError(detail.splitlines()[-1][:300])
 
 
+def _backup_path() -> Path:
+    base = Path(os.environ.get("HIBIT_DATA_DIR") or "/var/lib/hibit-signage")
+    return base / "network-backup.nmconnection"
+
+
+def _export(uuid: str) -> None:
+    path = _backup_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        path.unlink()
+    _check(["nmcli", "connection", "export", uuid, str(path)])
+
+
+def _rollback() -> None:
+    path = _backup_path()
+    if not path.is_file():
+        return
+    subprocess.run(["nmcli", "connection", "load", str(path)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=20)
+    text = path.read_text(encoding="utf-8", errors="replace")
+    match = re.search(r"(?m)^uuid=(.+)$", text)
+    if not match:
+        return
+    subprocess.run(
+        ["nmcli", "connection", "up", match.group(1).strip()],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        timeout=30,
+    )
+
+
+def _cloud_target() -> tuple[str, int] | None:
+    db_path = Path(os.environ.get("HIBIT_DATA_DIR") or "/var/lib/hibit-signage") / "player.db"
+    if not db_path.is_file():
+        return None
+    try:
+        con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        row = con.execute("SELECT value FROM settings WHERE key = 'cloud_url'").fetchone()
+        con.close()
+    except sqlite3.Error:
+        return None
+    if not row or not row[0]:
+        return None
+    parsed = urlparse(str(row[0]))
+    if not parsed.hostname:
+        return None
+    return parsed.hostname, parsed.port or (443 if parsed.scheme == "https" else 80)
+
+
+def _reachable(host: str, port: int) -> bool:
+    try:
+        with socket.create_connection((host, port), timeout=3):
+            return True
+    except OSError:
+        return False
+
+
+def _link_ok() -> bool:
+    target = _cloud_target()
+    deadline = time.time() + 60
+    while time.time() < deadline:
+        if _current_addrs() and (target is None or _reachable(*target)):
+            return True
+        time.sleep(3)
+    return False
+
+
 def _defer_up(uuid: str) -> None:
     pid = os.fork()
     if pid != 0:
@@ -316,5 +394,7 @@ def _defer_up(uuid: str) -> None:
             stderr=subprocess.DEVNULL,
             timeout=30,
         )
+        if not _link_ok():
+            _rollback()
     finally:
         os._exit(0)
