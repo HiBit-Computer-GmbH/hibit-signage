@@ -10,6 +10,10 @@ const state = {
   term: null,
   confirm: "",
   poweroff: false,
+  network: null,
+  networkId: "",
+  networkMethod: "",
+  networkSsids: [],
   addMode: "image-url",
   log: "",
   updateState: "idle",
@@ -336,6 +340,138 @@ function sharesHtml() {
     </section>` : ""}`;
 }
 
+function networkLabel(item) {
+  const kind = item.kind === "wifi" ? "WLAN" : "Ethernet";
+  const where = item.device || "inaktiv";
+  const addr = item.current || (item.address ? `${item.address}/${item.prefix || 24}` : "");
+  return `${kind} · ${item.name} · ${where}${addr ? " · " + addr : ""}`;
+}
+
+function networkHtml() {
+  const info = state.network;
+  if (!info) return `<section class="card panel"><h2>Netzwerk</h2><p class="muted">Netzwerk wird gelesen.</p></section>`;
+  if (!info.available) return `<section class="card panel"><h2>Netzwerk</h2><p class="muted">${esc(info.detail || "Netzwerk ist gerade nicht erreichbar.")}</p></section>`;
+  const connections = info.connections || [];
+  if (!connections.length) return `<section class="card panel"><h2>Netzwerk</h2><p class="muted">NetworkManager hat keine Ethernet- oder WLAN-Verbindung.</p></section>`;
+  const selected = connections.find((item) => item.id === state.networkId) || connections.find((item) => item.active) || connections[0];
+  state.networkId = selected.id;
+  const method = state.networkMethod || selected.method || "auto";
+  state.networkMethod = method;
+  const options = connections.map((item) => `<option value="${esc(item.id)}" ${item.id === selected.id ? "selected" : ""}>${esc(networkLabel(item))}</option>`).join("");
+  const ssids = (state.networkSsids || []).map((item) => `<option value="${esc(item.ssid)}"></option>`).join("");
+  return `<form class="card composer" id="network-form">
+    <div class="spread"><div><h2>Netzwerk</h2><p class="muted">Adresse und WLAN dieses Pi. Nach dem Speichern wird die Verbindung neu aufgebaut, die IP kann sich ändern.</p></div><button class="ghost" id="network-reload" type="button">Aktualisieren</button></div>
+    <label>Hostname<input name="hostname" value="${esc(info.hostname || "")}" required></label>
+    <label>Anschluss<select name="connection" id="network-connection">${options}</select></label>
+    <div class="mode-menu" role="group" aria-label="Adressvergabe">
+      <button type="button" data-net-method="auto" class="${method === "auto" ? "active" : ""}">Automatisch</button>
+      <button type="button" data-net-method="manual" class="${method === "manual" ? "active" : ""}">Feste Adresse</button>
+    </div>
+    <div class="grid-2" id="network-manual" ${method === "manual" ? "" : "hidden"}>
+      <label>Adresse<input name="address" value="${esc(selected.address || "")}" placeholder="192.168.1.50"></label>
+      <label>Präfix<input name="prefix" type="number" min="1" max="32" value="${esc(selected.prefix || 24)}"></label>
+      <label>Gateway<input name="gateway" value="${esc(selected.gateway || "")}" placeholder="192.168.1.1"></label>
+      <label>DNS<input name="dns" value="${esc((selected.dns || []).join(", "))}" placeholder="192.168.1.1"></label>
+    </div>
+    <div id="network-wifi" ${selected.kind === "wifi" ? "" : "hidden"}>
+      <label>WLAN<input name="ssid" list="network-ssids" value="${esc(selected.ssid || "")}" placeholder="Name des Netzes"></label>
+      <datalist id="network-ssids">${ssids}</datalist>
+      <label>Passwort<input name="psk" type="password" placeholder="leer lassen behält das bisherige" autocomplete="new-password"></label>
+      <button class="ghost" id="network-scan" type="button">Netze suchen</button>
+    </div>
+    <button type="submit">Netzwerk speichern</button>
+  </form>`;
+}
+
+function bindNetwork(saveUrl, scanUrl) {
+  const form = document.getElementById("network-form");
+  if (!form) return;
+  const reload = document.getElementById("network-reload");
+  if (reload) {
+    reload.addEventListener("click", async () => {
+      state.networkMethod = "";
+      await show();
+    });
+  }
+  const select = document.getElementById("network-connection");
+  if (select) {
+    select.addEventListener("change", () => {
+      state.networkId = select.value;
+      const item = ((state.network && state.network.connections) || []).find((entry) => entry.id === select.value);
+      fillNetwork(item);
+    });
+  }
+  document.querySelectorAll("[data-net-method]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.networkMethod = button.dataset.netMethod === "manual" ? "manual" : "auto";
+      const manual = document.getElementById("network-manual");
+      if (manual) manual.hidden = state.networkMethod !== "manual";
+      document.querySelectorAll("[data-net-method]").forEach((item) => item.classList.toggle("active", item.dataset.netMethod === state.networkMethod));
+    });
+  });
+  const scan = document.getElementById("network-scan");
+  if (scan) {
+    scan.addEventListener("click", async () => {
+      scan.disabled = true;
+      try {
+        const result = await api(scanUrl, { method: "POST", body: {} });
+        state.networkSsids = result.networks || [];
+        const list = document.getElementById("network-ssids");
+        if (list) list.innerHTML = state.networkSsids.map((item) => `<option value="${esc(item.ssid)}"></option>`).join("");
+        toast(state.networkSsids.length ? `${state.networkSsids.length} Netze gefunden` : "Kein WLAN gefunden");
+      } catch (error) {
+        toast(error.message, true);
+      } finally {
+        scan.disabled = false;
+      }
+    });
+  }
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const button = form.querySelector('button[type="submit"]');
+    if (button) button.disabled = true;
+    try {
+      const result = await api(saveUrl, {
+        method: "POST",
+        body: {
+          hostname: form.hostname.value.trim(),
+          connection: form.connection.value,
+          method: state.networkMethod || "auto",
+          address: form.address.value.trim(),
+          prefix: Number(form.prefix.value || 24),
+          gateway: form.gateway.value.trim(),
+          dns: form.dns.value,
+          ssid: form.ssid ? form.ssid.value.trim() : "",
+          psk: form.psk ? form.psk.value : "",
+        },
+      });
+      if (form.psk) form.psk.value = "";
+      toast(result.message || "Netzwerk gespeichert");
+    } catch (error) {
+      toast(error.message, true);
+    } finally {
+      if (button) button.disabled = false;
+    }
+  });
+}
+
+function fillNetwork(item) {
+  const form = document.getElementById("network-form");
+  if (!form || !item) return;
+  state.networkMethod = item.method === "manual" ? "manual" : "auto";
+  form.address.value = item.address || "";
+  form.prefix.value = item.prefix || 24;
+  form.gateway.value = item.gateway || "";
+  form.dns.value = (item.dns || []).join(", ");
+  if (form.ssid) form.ssid.value = item.ssid || "";
+  if (form.psk) form.psk.value = "";
+  const manual = document.getElementById("network-manual");
+  if (manual) manual.hidden = state.networkMethod !== "manual";
+  const wifi = document.getElementById("network-wifi");
+  if (wifi) wifi.hidden = item.kind !== "wifi";
+  document.querySelectorAll("[data-net-method]").forEach((button) => button.classList.toggle("active", button.dataset.netMethod === state.networkMethod));
+}
+
 function systemHtml() {
   const info = state.system || {};
   const cloud = info.cloud || {};
@@ -346,6 +482,7 @@ function systemHtml() {
       <article class="card stat"><span class="muted">Cloud</span><b style="font-size:1.15rem">${esc(cloudLabel(cloud.status))}</b><span class="meta">${esc(cloud.tenant || cloud.last_error || "")}</span></article>
       <article class="card stat"><span class="muted">Speicher frei</span><b>${sizeLabel(info.disk_free)}</b><span class="meta">von ${sizeLabel(info.disk_total)}</span></article>
     </div>
+    ${networkHtml()}
     <form class="card composer" id="cloud-form">
       <h2>Cloud</h2>
       <label>Adresse<input name="url" value="${esc(cloud.url || "")}" placeholder="https://signage.example.com"></label>
@@ -436,6 +573,11 @@ async function load() {
       state.updateState = update.state || "idle";
     } catch (error) {
       state.updateState = "idle";
+    }
+    try {
+      state.network = await api("/api/system/network");
+    } catch (error) {
+      state.network = { available: false, detail: error.message, hostname: "", connections: [] };
     }
   }
 }
@@ -690,6 +832,7 @@ function bindShares() {
 }
 
 function bindSystem() {
+  bindNetwork("/api/system/network", "/api/system/network/scan");
   document.getElementById("cloud-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = event.currentTarget;

@@ -1126,6 +1126,49 @@ async def device_boot_logo_clear(device_id: str, request: Request):
     return {"ok": True, "message": result.get("detail") or "Standardlogo wiederhergestellt."}
 
 
+@app.get("/api/devices/{device_id}/network")
+async def device_network(device_id: str, request: Request):
+    _require_device(request.state.user, device_id, adopted=True)
+    try:
+        result = await hub.request(device_id, {"type": "network_get"}, timeout=20)
+    except TimeoutError as exc:
+        raise HTTPException(504, "Das Gerät hat nicht rechtzeitig geantwortet.") from exc
+    except RuntimeError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    if result.get("ok") is False:
+        raise HTTPException(400, result.get("detail") or "Netzwerk konnte nicht gelesen werden.")
+    return result
+
+
+@app.post("/api/devices/{device_id}/network/scan")
+async def device_network_scan(device_id: str, request: Request):
+    _require_device(request.state.user, device_id, adopted=True)
+    try:
+        result = await hub.request(device_id, {"type": "network_scan"}, timeout=35)
+    except TimeoutError as exc:
+        raise HTTPException(504, "Das Gerät hat nicht rechtzeitig geantwortet.") from exc
+    except RuntimeError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    if result.get("ok") is False:
+        raise HTTPException(400, result.get("detail") or "Die Suche hat keine Netze geliefert.")
+    return result
+
+
+@app.post("/api/devices/{device_id}/network")
+async def device_network_apply(device_id: str, request: Request):
+    _require_device(request.state.user, device_id, adopted=True)
+    data = await _json(request)
+    try:
+        result = await hub.request(device_id, {"type": "network_apply", "config": data}, timeout=25)
+    except TimeoutError as exc:
+        raise HTTPException(504, "Das Gerät hat nicht rechtzeitig geantwortet.") from exc
+    except RuntimeError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    if result.get("ok") is False:
+        raise HTTPException(400, result.get("detail") or "Netzwerk konnte nicht gespeichert werden.")
+    return {"ok": True, "message": result.get("message") or "Gespeichert."}
+
+
 @app.post("/api/devices/{device_id}/power")
 async def device_power(device_id: str, request: Request):
     _require_device(request.state.user, device_id, adopted=True)

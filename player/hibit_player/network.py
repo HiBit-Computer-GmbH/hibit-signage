@@ -1,8 +1,14 @@
 from __future__ import annotations
 
+import json
+import os
 import socket
 import subprocess
 import sys
+from pathlib import Path
+
+from hibit_player.config import install_dir
+from hibit_player.netcfg import validate
 
 
 def local_ips() -> list[str]:
@@ -52,3 +58,75 @@ def local_ips() -> list[str]:
 
 def hostname() -> str:
     return socket.gethostname() or "hibit-signage"
+
+
+def _script() -> Path | None:
+    installed = Path("/usr/local/sbin/hibit-network")
+    if installed.exists():
+        return installed
+    local = install_dir() / "install" / "hibit-network"
+    if local.exists():
+        return local
+    return None
+
+
+def _unavailable(detail: str) -> dict:
+    return {"available": False, "detail": detail, "hostname": hostname(), "connections": []}
+
+
+def _call(action: str, payload: dict | None = None, timeout: int = 20) -> dict:
+    script = _script()
+    if not sys.platform.startswith("linux") or script is None:
+        raise RuntimeError("Netzwerk lässt sich auf diesem System nicht einstellen.")
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        command = [sys.executable, str(script), action]
+    else:
+        command = ["sudo", "-n", str(script), action]
+    try:
+        proc = subprocess.run(
+            command,
+            input=json.dumps(payload) if payload is not None else None,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise RuntimeError("Die Netzwerkkonfiguration ist nicht erreichbar.") from exc
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout or "Netzwerk konnte nicht geändert werden.").strip()
+        lowered = detail.lower()
+        if "password is required" in lowered or "not allowed" in lowered or "a terminal is required" in lowered:
+            detail = "Die Netzwerk-Berechtigung fehlt. Bitte den Player einmal updaten."
+        raise RuntimeError(detail.splitlines()[-1][:400])
+    try:
+        data = json.loads(proc.stdout or "{}")
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("Die Netzwerkkonfiguration hat keine Antwort geliefert.") from exc
+    if not isinstance(data, dict):
+        raise RuntimeError("Die Netzwerkkonfiguration hat keine Antwort geliefert.")
+    return data
+
+
+def network_status() -> dict:
+    try:
+        data = _call("show", timeout=15)
+    except RuntimeError as exc:
+        return _unavailable(str(exc))
+    data["available"] = True
+    data.setdefault("hostname", hostname())
+    data.setdefault("connections", [])
+    return data
+
+
+def network_scan() -> dict:
+    data = _call("scan", timeout=30)
+    networks = data.get("networks")
+    if not isinstance(networks, list):
+        raise RuntimeError("Die Suche hat keine Netze geliefert.")
+    return {"networks": networks}
+
+
+def network_apply(data: dict) -> str:
+    clean = validate(data)
+    result = _call("apply", clean, timeout=25)
+    return str(result.get("message") or "Gespeichert. Die Verbindung wird neu aufgebaut.")

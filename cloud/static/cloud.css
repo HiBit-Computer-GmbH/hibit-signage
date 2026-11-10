@@ -109,6 +109,8 @@ h1 { font-size: 1.35rem; letter-spacing: -0.035em; font-weight: 680; margin: 0 0
 form { display: grid; gap: 16px; margin: 0; }
 .grid-2, .grid-3 { display: grid; gap: 12px; }
 .grid-2 { grid-template-columns: 1fr 1fr; }
+#network-manual[hidden], #network-wifi[hidden] { display: none; }
+#network-wifi { display: grid; gap: 12px; }
 .grid-2:has(> :nth-child(3):last-child) { grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) 9rem; }
 .grid-3 { grid-template-columns: 1.4fr 1fr 1fr auto; align-items: end; }
 .row, .spread { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }

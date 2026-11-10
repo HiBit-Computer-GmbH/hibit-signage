@@ -90,10 +90,11 @@ install -m 755 "$TARGET/install/hibit-mount" /usr/local/sbin/hibit-mount
 install -m 755 "$TARGET/install/hibit-update-player" /usr/local/sbin/hibit-update-player
 install -m 755 "$TARGET/install/hibit-power" /usr/local/sbin/hibit-power
 install -m 755 "$TARGET/install/hibit-splash" /usr/local/sbin/hibit-splash
+install -m 755 "$TARGET/install/hibit-network" /usr/local/sbin/hibit-network
 python3 "$TARGET/install/blank-cursor.py" --system || true
 SYSTEMCTL="$(command -v systemctl)"
 cat >/etc/sudoers.d/hibit-signage <<EOF
-hibit ALL=(root) NOPASSWD: /usr/local/sbin/hibit-mount, /usr/local/sbin/hibit-update-player, /usr/local/sbin/hibit-power, /usr/local/sbin/hibit-splash, ${SYSTEMCTL} restart hibit-kiosk
+hibit ALL=(root) NOPASSWD: /usr/local/sbin/hibit-mount, /usr/local/sbin/hibit-update-player, /usr/local/sbin/hibit-power, /usr/local/sbin/hibit-splash, /usr/local/sbin/hibit-network, ${SYSTEMCTL} restart hibit-kiosk
 EOF
 chmod 440 /etc/sudoers.d/hibit-signage
 

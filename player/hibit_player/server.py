@@ -24,7 +24,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from hibit_player import agent, db, mounts, playback, power, splash, updater, webproxy
 from hibit_player.shell import shells
 from hibit_player.config import data_dir, install_dir, media_dir, port, version
-from hibit_player.network import hostname, local_ips
+from hibit_player.network import hostname, local_ips, network_apply, network_scan, network_status
 from hibit_player.security import verify_password
 from hibit_player.validate import STORED_RE, kind_for_name, kind_for_url, safe_filename, safe_relative, validate_share
 
@@ -910,6 +910,31 @@ def system_update():
 @app.get("/api/system/update-log")
 def system_update_log():
     return JSONResponse(updater.snapshot(), headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/system/network")
+async def system_network():
+    return await asyncio.to_thread(network_status)
+
+
+@app.post("/api/system/network/scan")
+async def system_network_scan():
+    try:
+        return await asyncio.to_thread(network_scan)
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.post("/api/system/network")
+async def system_network_apply(request: Request):
+    data = await _json(request)
+    try:
+        message = await asyncio.to_thread(network_apply, data)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"ok": True, "message": message}
 
 
 @app.post("/api/system/power")

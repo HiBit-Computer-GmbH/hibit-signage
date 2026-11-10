@@ -14,7 +14,7 @@ import uuid
 from hibit_player import db, mounts, playback, power, screen, splash, updater
 from hibit_player.shell import shells
 from hibit_player.config import media_dir, version
-from hibit_player.network import hostname, local_ips
+from hibit_player.network import hostname, local_ips, network_apply, network_scan, network_status
 
 log = logging.getLogger("hibit.player.agent")
 _STARTED = time.monotonic()
@@ -230,6 +230,23 @@ class CloudAgent:
                     await ws.send(json.dumps({"type": "power_done", "req": msg.get("req"), "detail": message, "ok": True}))
                 except Exception as exc:
                     await ws.send(json.dumps({"type": "power_done", "req": msg.get("req"), "detail": str(exc), "ok": False}))
+            elif kind in {"network_get", "network_scan", "network_apply"}:
+                await self._network(ws, msg)
+
+    async def _network(self, ws, msg: dict) -> None:
+        kind = msg.get("type")
+        try:
+            if kind == "network_get":
+                payload = await asyncio.to_thread(network_status)
+                await ws.send(json.dumps({"type": "network_done", "req": msg.get("req"), "ok": True, **payload}))
+            elif kind == "network_scan":
+                payload = await asyncio.to_thread(network_scan)
+                await ws.send(json.dumps({"type": "network_done", "req": msg.get("req"), "ok": True, **payload}))
+            else:
+                message = await asyncio.to_thread(network_apply, msg.get("config") if isinstance(msg.get("config"), dict) else {})
+                await ws.send(json.dumps({"type": "network_done", "req": msg.get("req"), "ok": True, "message": message}))
+        except Exception as exc:
+            await ws.send(json.dumps({"type": "network_done", "req": msg.get("req"), "ok": False, "detail": str(exc)}))
 
     def _apply_welcome(self, msg: dict) -> None:
         status = msg.get("status") or "pending"

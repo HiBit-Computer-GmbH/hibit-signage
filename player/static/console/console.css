@@ -96,6 +96,8 @@ label.inline { display: flex; align-items: center; gap: 8px; }
 
 form { display: grid; gap: 16px; margin: 0; }
 .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+#network-manual[hidden], #network-wifi[hidden] { display: none; }
+#network-wifi { display: grid; gap: 12px; }
 .grid-2:has(> :nth-child(3):last-child) { grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) 9rem; }
 .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .spread { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
