@@ -197,14 +197,23 @@ function brand() {
   return `<a class="brand" href="#/dashboard"><img class="logo-on-dark" src="/logo-on-dark.png" alt="HiBit"><img class="logo-on-light" src="/logo-on-light.png" alt=""><span class="product">Signage Cloud</span></a>`;
 }
 
+function themeGlyph(theme) {
+  if (theme === "light") {
+    return icon('<circle cx="12" cy="12" r="3.5" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M12 3.5v2.2M12 18.3v2.2M3.5 12h2.2M18.3 12h2.2M6 6l1.6 1.6M16.4 16.4 18 18M18 6l-1.6 1.6M7.6 16.4 6 18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>');
+  }
+  return icon('<path d="M15.8 3.4a7.6 7.6 0 1 0 4.8 11.4A6.1 6.1 0 0 1 15.8 3.4z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>');
+}
+
 function themeSwitch() {
   const theme = document.documentElement.dataset.theme === "light" ? "light" : "dark";
-  const sun = icon('<circle cx="12" cy="12" r="3.5" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M12 3.5v2.2M12 18.3v2.2M3.5 12h2.2M18.3 12h2.2M6 6l1.6 1.6M16.4 16.4 18 18M18 6l-1.6 1.6M7.6 16.4 6 18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>');
-  const moon = icon('<path d="M15.8 3.4a7.6 7.6 0 1 0 4.8 11.4A6.1 6.1 0 0 1 15.8 3.4z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>');
-  return `<div class="theme-switch" role="group" aria-label="Darstellung">
-    <button type="button" data-theme-set="light" class="${theme === "light" ? "active" : ""}" aria-label="Helle Darstellung" title="Hell">${sun}</button>
-    <button type="button" data-theme-set="dark" class="${theme === "dark" ? "active" : ""}" aria-label="Dunkle Darstellung" title="Dunkel">${moon}</button>
-  </div>`;
+  const label = theme === "light" ? "Hell, auf dunkel wechseln" : "Dunkel, auf hell wechseln";
+  return `<button type="button" class="icon theme-toggle" data-theme-toggle aria-label="${label}" title="${theme === "light" ? "Hell" : "Dunkel"}">${themeGlyph(theme)}</button>`;
+}
+
+function profileButton() {
+  const active = route().name === "account" ? " active" : "";
+  const letter = (state.user.name || "?").trim().charAt(0).toUpperCase() || "?";
+  return `<a class="profile${active}" href="#/account" aria-label="Konto" title="${esc(state.user.name)}">${esc(letter)}</a>`;
 }
 
 function nav() {
@@ -212,7 +221,6 @@ function nav() {
   const items = [["dashboard", "Übersicht"], ["devices", "Geräte"]];
   if (isAdmin()) items.push(["tenants", "Mandanten"], ["keys", "Schlüssel"]);
   if (state.user.role !== "tenant_user") items.push(["users", "Benutzer"]);
-  items.push(["account", "Konto"]);
   if (isAdmin()) items.push(["system", "System"]);
   return items.map(([id, label]) => `<a href="#/${id}" class="${current === id || (current === "device" && id === "devices") ? "active" : ""}">${label}</a>`).join("");
 }
@@ -220,7 +228,7 @@ function nav() {
 function layout(inner) {
   const out = icon('<path d="M10 7V5.2A1.2 1.2 0 0 1 11.2 4H19v16h-7.8A1.2 1.2 0 0 1 10 18.8V17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M4 12h10.2M11.2 8.2 15 12l-3.8 3.8" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>');
   return `<div class="shell"><aside class="side">${brand()}${tenantSwitch()}<nav class="nav">${nav()}</nav>
-    <div class="side-foot"><div class="who"><div class="who-name">${esc(state.user.name)}</div><div class="who-role">${esc(roleLabel(state.user.role))}${state.user.tenant_name ? " · " + esc(state.user.tenant_name) : ""}</div></div>
+    <div class="side-foot">${profileButton()}<div class="who"><div class="who-name">${esc(state.user.name)}</div><div class="who-role">${esc(roleLabel(state.user.role))}${state.user.tenant_name ? " · " + esc(state.user.tenant_name) : ""}</div></div>
     <div class="side-tools">${themeSwitch()}<button class="icon" id="logout" type="button" aria-label="Abmelden" title="Abmelden">${out}</button></div></div></aside><main class="main">${inner}</main></div>`;
 }
 
@@ -582,7 +590,7 @@ function systemHtml() {
   const info = state.system || {};
   return `<div class="page-head"><div><h1>Cloud-System</h1><p class="muted">Version ${esc(info.version || "")} ${info.commit ? "· " + esc(info.commit) : ""}</p></div></div>
     <article class="card stat"><span class="muted">Speicher frei</span><b>${sizeLabel(info.disk_free)}</b></article>
-    <section class="card panel"><div class="spread"><div><div class="title">Cloud aus GitHub updaten</div><p class="muted">Sofort, oder zu einem Zeitpunkt. Das Konto mit Passwort und 2FA liegt unter Konto.</p></div><button id="cloud-update" type="button">Jetzt</button></div>
+    <section class="card panel"><div class="spread"><div><div class="title">Cloud aus GitHub updaten</div><p class="muted">Sofort, oder zu einem Zeitpunkt. Passwort und 2FA liegen im Profil.</p></div><button id="cloud-update" type="button">Jetzt</button></div>
     <form class="row" id="cloud-schedule"><label>Zeitpunkt<input type="datetime-local" name="run_at" required value="${localInput(info.update_at)}"></label><button class="ghost" type="submit">Planen</button>${info.update_at ? `<button class="ghost" id="cloud-schedule-clear" type="button">Planung löschen</button>` : ""}</form>
     ${info.update_at ? `<p class="muted">Geplant für ${esc(when(info.update_at))}.</p>` : ""}
     <p class="muted" id="update-state">${esc(updateStatusText(state.updateState, false))}</p>
@@ -770,12 +778,14 @@ function startPreview() {
 }
 
 function bind(current) {
-  document.querySelectorAll("[data-theme-set]").forEach((button) => {
+  document.querySelectorAll("[data-theme-toggle]").forEach((button) => {
     button.addEventListener("click", () => {
-      const theme = button.dataset.themeSet === "light" ? "light" : "dark";
-      document.documentElement.dataset.theme = theme;
-      localStorage.setItem("hibit-theme", theme);
-      document.querySelectorAll("[data-theme-set]").forEach((item) => item.classList.toggle("active", item.dataset.themeSet === theme));
+      const next = document.documentElement.dataset.theme === "light" ? "dark" : "light";
+      document.documentElement.dataset.theme = next;
+      localStorage.setItem("hibit-theme", next);
+      button.innerHTML = themeGlyph(next);
+      button.title = next === "light" ? "Hell" : "Dunkel";
+      button.setAttribute("aria-label", next === "light" ? "Hell, auf dunkel wechseln" : "Dunkel, auf hell wechseln");
     });
   });
   const tenantToggle = document.getElementById("tenant-toggle");

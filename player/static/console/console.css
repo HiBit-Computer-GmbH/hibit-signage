@@ -206,21 +206,32 @@ th { color: var(--faint); font-size: 0.78rem; font-weight: 700; letter-spacing: 
   background: #141910;
 }
 .terminal {
+  --term-row: 16px;
   flex: 1;
   min-height: 0;
   height: auto;
   background: #070806;
   border-radius: 0;
-  padding: 14px 16px;
+  padding: 8px 10px;
   overflow: hidden;
   font-family: var(--mono);
-  font-size: 14px;
-  line-height: 1.35;
+  font-size: 13px;
+  line-height: 16px;
+  letter-spacing: 0;
+  font-variant-ligatures: none;
+  font-feature-settings: "liga" 0, "calt" 0;
   white-space: pre;
 }
-.terminal:focus { outline: 2px solid rgba(214, 255, 74, 0.45); outline-offset: 2px; }
-.term-row { height: 1.35em; white-space: pre; }
-.term-probe { position: absolute; visibility: hidden; font: inherit; white-space: pre; }
+.terminal:focus { outline: 2px solid rgba(214, 255, 74, 0.45); outline-offset: -2px; }
+.term-row {
+  display: grid; grid-auto-flow: column; grid-auto-columns: 1ch;
+  height: var(--term-row); line-height: var(--term-row); overflow: hidden;
+}
+.term-cell {
+  width: 1ch; min-width: 0; height: var(--term-row); line-height: var(--term-row);
+  overflow: hidden; font-variant-ligatures: none;
+}
+.term-probe { position: absolute; visibility: hidden; font: inherit; letter-spacing: 0; font-variant-ligatures: none; white-space: pre; }
 
 .toast {
   position: fixed;
