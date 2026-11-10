@@ -66,7 +66,13 @@
       this.el.addEventListener("keydown", (event) => this.onKey(event));
       this.el.addEventListener("paste", (event) => {
         const text = event.clipboardData.getData("text");
-        if (text) this.emit(text.replace(/\n/g, "\r"));
+        if (text) this.emit(text);
+        event.preventDefault();
+      });
+      this.el.addEventListener("copy", (event) => {
+        const text = this.selectionText();
+        if (!text) return;
+        event.clipboardData.setData("text/plain", text);
         event.preventDefault();
       });
       this.el.addEventListener("click", () => this.el.focus());
@@ -142,14 +148,48 @@
       if (this.onInput) this.onInput(text);
     }
 
+    hasSelection() {
+      const sel = window.getSelection();
+      if (!sel || sel.isCollapsed || !sel.rangeCount) return false;
+      const node = sel.anchorNode;
+      return !!(node && this.el.contains(node));
+    }
+
+    selectionText() {
+      const sel = window.getSelection();
+      if (!sel || sel.isCollapsed || !sel.rangeCount || !sel.anchorNode || !this.el.contains(sel.anchorNode)) return "";
+      const lines = [];
+      this.el.querySelectorAll(".term-row").forEach((row) => {
+        let line = "";
+        let hit = false;
+        row.querySelectorAll(".term-cell").forEach((cell) => {
+          if (!sel.containsNode(cell, true)) return;
+          hit = true;
+          line += cell.textContent || "";
+        });
+        if (hit) lines.push(line.replace(/\s+$/, ""));
+      });
+      while (lines.length && lines[lines.length - 1] === "") lines.pop();
+      return lines.join("\n");
+    }
+
     onKey(event) {
-      if (event.ctrlKey && !event.altKey && !event.metaKey && event.key.length === 1) {
-        const key = event.key.toLowerCase();
-        if (key >= "a" && key <= "z") {
-          this.emit(String.fromCharCode(key.charCodeAt(0) - 96));
+      const accel = (event.ctrlKey || event.metaKey) && !event.altKey;
+      const key = event.key.toLowerCase();
+      if (accel && key === "v") return;
+      if (event.shiftKey && event.key === "Insert") return;
+      if (accel && (key === "c" || key === "insert") && (event.shiftKey || event.metaKey || this.hasSelection())) {
+        if (event.shiftKey || event.metaKey || key === "insert") {
+          const text = this.selectionText();
+          if (text && navigator.clipboard) navigator.clipboard.writeText(text).catch(() => {});
           event.preventDefault();
-          return;
         }
+        return;
+      }
+      if (event.ctrlKey && !event.altKey && !event.metaKey && !event.shiftKey && key.length === 1 && key >= "a" && key <= "z") {
+        this.emit(String.fromCharCode(key.charCodeAt(0) - 96));
+        event.preventDefault();
+        return;
       }
       const arrows = this.appCursor
         ? { ArrowUp: "\u001bOA", ArrowDown: "\u001bOB", ArrowRight: "\u001bOC", ArrowLeft: "\u001bOD" }

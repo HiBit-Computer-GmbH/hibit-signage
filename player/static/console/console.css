@@ -221,6 +221,8 @@ th { color: var(--faint); font-size: 0.78rem; font-weight: 700; letter-spacing: 
   font-variant-ligatures: none;
   font-feature-settings: "liga" 0, "calt" 0;
   white-space: pre;
+  user-select: text;
+  cursor: text;
 }
 .terminal:focus { outline: 2px solid rgba(214, 255, 74, 0.45); outline-offset: -2px; }
 .term-row {
@@ -229,7 +231,7 @@ th { color: var(--faint); font-size: 0.78rem; font-weight: 700; letter-spacing: 
 }
 .term-cell {
   width: 1ch; min-width: 0; height: var(--term-row); line-height: var(--term-row);
-  overflow: hidden; font-variant-ligatures: none;
+  overflow: hidden; font-variant-ligatures: none; user-select: text;
 }
 .term-probe { position: absolute; visibility: hidden; font: inherit; letter-spacing: 0; font-variant-ligatures: none; white-space: pre; }
 
