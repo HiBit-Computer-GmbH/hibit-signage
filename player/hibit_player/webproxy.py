@@ -26,6 +26,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response, Streamin
 
 from hibit_player import db
 from hibit_player.config import data_dir, port
+from hibit_player.trust import client_context
 
 log = logging.getLogger("hibit.player.web")
 
@@ -593,10 +594,15 @@ async def handle_ws(ws: WebSocket, scheme: str, host: str, path: str) -> None:
         return
     try:
         kwargs = {"additional_headers": headers, "open_timeout": 15, "max_size": _REWRITE_LIMIT}
+        if scheme == "wss":
+            kwargs["ssl"] = client_context()
         try:
             remote_cm = websockets.connect(ws_target, **kwargs)
         except TypeError:
-            remote_cm = websockets.connect(ws_target, extra_headers=headers, open_timeout=15, max_size=_REWRITE_LIMIT)
+            fallback = {"extra_headers": headers, "open_timeout": 15, "max_size": _REWRITE_LIMIT}
+            if scheme == "wss":
+                fallback["ssl"] = client_context()
+            remote_cm = websockets.connect(ws_target, **fallback)
         async with remote_cm as remote:
             await _pump_ws(ws, remote)
     except Exception:
@@ -625,7 +631,11 @@ def _fetch(method: str, target: str, headers: dict, body: bytes) -> Response:
         upstream["Referer"] = referer
     payload = body if method in {"POST", "PUT", "PATCH", "DELETE"} and body else None
     req = urllib.request.Request(target, data=payload, headers=upstream, method=method)
-    opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(_JAR), _StopRedirect())
+    opener = urllib.request.build_opener(
+        urllib.request.HTTPSHandler(context=client_context()),
+        urllib.request.HTTPCookieProcessor(_JAR),
+        _StopRedirect(),
+    )
     redirected: _Redirect | None = None
     with _JAR_LOCK:
         try:

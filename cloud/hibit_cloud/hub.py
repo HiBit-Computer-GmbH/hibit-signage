@@ -309,7 +309,7 @@ class Hub:
             if fresh and fresh["status"] == "adopted" and int(fresh["state_revision"] or 0) > applied:
                 await self.push_state(device_id)
             return
-        if kind in {"browse_result", "update_started", "power_done", "update_log", "preview", "boot_logo_done", "network_done"}:
+        if kind in {"browse_result", "update_started", "power_done", "update_log", "preview", "boot_logo_done", "network_done", "certs_done"}:
             future = self.pending.get(str(msg.get("req") or ""))
             if future and not future.done():
                 future.set_result(msg)

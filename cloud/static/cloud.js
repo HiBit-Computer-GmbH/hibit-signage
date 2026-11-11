@@ -624,6 +624,96 @@ function fillNetwork(item) {
   document.querySelectorAll("[data-net-method]").forEach((button) => button.classList.toggle("active", button.dataset.netMethod === state.networkMethod));
 }
 
+function certsHtml() {
+  const info = state.certs;
+  if (!info) return `<section class="card panel"><h2>Zertifikate</h2><p class="muted">Zertifikate werden gelesen.</p></section>`;
+  if (info.available === false) return `<section class="card panel"><h2>Zertifikate</h2><p class="muted">${esc(info.detail || "Nach dem Player-Update verfügbar.")}</p></section>`;
+  const offer = state.certOffer;
+  const offerHtml = offer
+    ? `<div class="confirm-box" id="cert-offer"><p>${esc(offer.detail || "")}</p><p class="meta">${esc(offer.subject || "")}${offer.not_after ? " · gültig bis " + esc(offer.not_after) : ""}</p>${offer.pem ? `<button type="button" id="cert-trust">Diesem Aussteller vertrauen</button>` : ""}</div>`
+    : `<div id="cert-offer" hidden></div>`;
+  const rows = (info.certs || []).map((item) => `<div class="spread"><div><strong>${esc(item.subject)}</strong><div class="meta">${esc(item.issuer)}${item.not_after ? " · gültig bis " + esc(item.not_after) : ""}</div></div><button class="ghost" type="button" data-cert-remove="${esc(item.id)}">Entfernen</button></div>`).join("");
+  return `<section class="card panel" id="cert-panel">
+    <h2>Zertifikate</h2>
+    <p class="muted">Wenn eine Firewall HTTPS prüft und ein eigenes Zertifikat einsetzt, vertraut der Player den Seiten erst, nachdem das Zertifikat der Firewall hier liegt.</p>
+    <div class="row"><label>Adresse<input id="cert-host" value="${esc(state.certHost || "")}" placeholder="uptimekuma.hibit.de"></label><button class="ghost" id="cert-inspect" type="button">Anzeigen</button></div>
+    ${offerHtml}
+    <form id="cert-file" class="row"><label>PEM-Datei<input name="file" type="file" accept=".pem,.crt,.cer,text/plain"></label><button class="ghost" type="submit">Hochladen</button></form>
+    <div class="list">${rows || '<p class="muted">Noch keines.</p>'}</div>
+  </section>`;
+}
+
+function bindCerts(base) {
+  const panel = document.getElementById("cert-panel");
+  if (!panel) return;
+  const inspect = document.getElementById("cert-inspect");
+  if (inspect) {
+    inspect.addEventListener("click", async () => {
+      const host = document.getElementById("cert-host");
+      state.certHost = host ? host.value : "";
+      inspect.disabled = true;
+      try {
+        state.certOffer = await api(`${base}/inspect`, { method: "POST", body: { host: state.certHost } });
+        await show();
+      } catch (error) {
+        toast(error.message, true);
+      } finally {
+        inspect.disabled = false;
+      }
+    });
+  }
+  const trust = document.getElementById("cert-trust");
+  if (trust) {
+    trust.addEventListener("click", async () => {
+      if (!state.certOffer || !state.certOffer.pem) return;
+      trust.disabled = true;
+      try {
+        const result = await api(base, { method: "POST", body: { pem: state.certOffer.pem } });
+        state.certOffer = null;
+        toast(result.message || "Zertifikat gespeichert");
+        await show();
+      } catch (error) {
+        toast(error.message, true);
+        trust.disabled = false;
+      }
+    });
+  }
+  const fileForm = document.getElementById("cert-file");
+  if (fileForm) {
+    fileForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const file = fileForm.file.files[0];
+      if (!file) {
+        toast("Bitte eine PEM-Datei wählen", true);
+        return;
+      }
+      try {
+        const pem = await file.text();
+        const result = await api(base, { method: "POST", body: { pem } });
+        state.certOffer = null;
+        toast(result.message || "Zertifikat gespeichert");
+        await show();
+      } catch (error) {
+        toast(error.message, true);
+      }
+    });
+  }
+  panel.addEventListener("click", async (event) => {
+    const button = event.target.closest("[data-cert-remove]");
+    if (!button) return;
+    button.disabled = true;
+    try {
+      const result = await api(`${base}/${button.dataset.certRemove}`, { method: "DELETE" });
+      state.certOffer = null;
+      toast(result.message || "Zertifikat entfernt");
+      await show();
+    } catch (error) {
+      toast(error.message, true);
+      button.disabled = false;
+    }
+  });
+}
+
 function settingsTab() {
   const device = state.device;
   const power = `<section class="card panel" id="power-panel">
@@ -641,7 +731,7 @@ function settingsTab() {
       <label>Logo<input name="file" type="file" accept="image/png,.png" required></label>
       <div class="row"><button type="submit">Logo speichern</button><button class="ghost" id="splash-reset" type="button">Standardlogo</button></div>
     </form>`;
-  return `${networkHtml()}${power}${splash}<form class="card composer" id="rename-form"><label>Name<input name="name" value="${esc(device.name)}" required></label><button type="submit">Speichern</button></form>
+  return `${networkHtml()}${certsHtml()}${power}${splash}<form class="card composer" id="rename-form"><label>Name<input name="name" value="${esc(device.name)}" required></label><button type="submit">Speichern</button></form>
     ${isAdmin() ? `<form class="card composer" id="move-form"><label>Mandant wechseln<select name="tenant_id">${tenantOptions(device.tenant_id)}</select></label><button class="ghost" type="submit">Verschieben</button></form>
     <section class="card panel"><div class="spread"><div><div class="title">Geräte-Update</div><p class="muted">Sofort, oder zu einem Zeitpunkt. Offline wartet der Plan, bis der Pi wieder da ist.</p></div><button id="device-update" type="button">Jetzt</button></div>
     <form class="row" id="device-schedule"><label>Zeitpunkt<input type="datetime-local" name="run_at" required value="${localInput(device.update_at)}"></label><button class="ghost" type="submit">Planen</button>${device.update_at ? `<button class="ghost" id="device-schedule-clear" type="button">Planung löschen</button>` : ""}</form>
@@ -805,11 +895,12 @@ async function load() {
     state.device = data.device;
     state.playback = data.state;
     if (current.tab === "settings") {
-      try {
-        state.network = await api(`/api/devices/${current.id}/network`);
-      } catch (error) {
-        state.network = { available: false, detail: error.message, hostname: "", connections: [] };
-      }
+      const [network, certs] = await Promise.all([
+        api(`/api/devices/${current.id}/network`).catch((error) => ({ available: false, detail: error.message, hostname: "", connections: [] })),
+        api(`/api/devices/${current.id}/certs`).catch((error) => ({ available: false, detail: error.message, certs: [] })),
+      ]);
+      state.network = network;
+      state.certs = certs;
     }
   }
   if (["device", "tenants", "users", "keys"].includes(current.name) || (current.name === "device" && state.device && state.device.status === "pending")) {
@@ -1178,6 +1269,7 @@ function bindShares() {
 
 function bindSettings() {
   bindNetwork(`/api/devices/${deviceId()}/network`, `/api/devices/${deviceId()}/network/scan`);
+  bindCerts(`/api/devices/${deviceId()}/certs`);
   const splash = document.getElementById("splash-form");
   if (splash) {
     splash.addEventListener("submit", async (event) => {

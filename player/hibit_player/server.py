@@ -25,6 +25,7 @@ from hibit_player import agent, db, mounts, playback, power, splash, updater, we
 from hibit_player.shell import shells
 from hibit_player.config import data_dir, install_dir, media_dir, port, version
 from hibit_player.network import hostname, local_ips, network_apply, network_scan, network_status
+from hibit_player.trust import add_pem, inspect_host, list_certs, remove_cert
 from hibit_player.security import verify_password
 from hibit_player.validate import STORED_RE, kind_for_name, kind_for_url, safe_filename, safe_relative, validate_share
 
@@ -933,6 +934,40 @@ async def system_network_apply(request: Request):
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     except RuntimeError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"ok": True, "message": message}
+
+
+@app.get("/api/system/certs")
+async def system_certs():
+    return await asyncio.to_thread(list_certs)
+
+
+@app.post("/api/system/certs/inspect")
+async def system_certs_inspect(request: Request):
+    data = await _json(request)
+    try:
+        return await asyncio.to_thread(inspect_host, str(data.get("host") or ""))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.post("/api/system/certs")
+async def system_certs_add(request: Request):
+    data = await _json(request)
+    try:
+        return await asyncio.to_thread(add_pem, str(data.get("pem") or ""))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.delete("/api/system/certs/{cert_id}")
+async def system_certs_remove(cert_id: str):
+    try:
+        message = await asyncio.to_thread(remove_cert, cert_id)
+    except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     return {"ok": True, "message": message}
 

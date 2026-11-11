@@ -15,6 +15,7 @@ from hibit_player import db, mounts, playback, power, screen, splash, updater
 from hibit_player.shell import shells
 from hibit_player.config import media_dir, version
 from hibit_player.network import hostname, local_ips, network_apply, network_scan, network_status
+from hibit_player.trust import add_pem, inspect_host, list_certs, remove_cert
 
 log = logging.getLogger("hibit.player.agent")
 _STARTED = time.monotonic()
@@ -232,6 +233,8 @@ class CloudAgent:
                     await ws.send(json.dumps({"type": "power_done", "req": msg.get("req"), "detail": str(exc), "ok": False}))
             elif kind in {"network_get", "network_scan", "network_apply"}:
                 await self._network(ws, msg)
+            elif kind in {"certs_list", "certs_add", "certs_remove", "certs_inspect"}:
+                await self._certs(ws, msg)
 
     async def _network(self, ws, msg: dict) -> None:
         kind = msg.get("type")
@@ -247,6 +250,24 @@ class CloudAgent:
                 await ws.send(json.dumps({"type": "network_done", "req": msg.get("req"), "ok": True, "message": message}))
         except Exception as exc:
             await ws.send(json.dumps({"type": "network_done", "req": msg.get("req"), "ok": False, "detail": str(exc)}))
+
+    async def _certs(self, ws, msg: dict) -> None:
+        kind = msg.get("type")
+        try:
+            if kind == "certs_list":
+                payload = await asyncio.to_thread(list_certs)
+                await ws.send(json.dumps({"type": "certs_done", "req": msg.get("req"), "ok": True, **payload}))
+            elif kind == "certs_inspect":
+                payload = await asyncio.to_thread(inspect_host, str(msg.get("host") or ""))
+                await ws.send(json.dumps({"type": "certs_done", "req": msg.get("req"), "ok": True, **payload}))
+            elif kind == "certs_remove":
+                message = await asyncio.to_thread(remove_cert, str(msg.get("id") or ""))
+                await ws.send(json.dumps({"type": "certs_done", "req": msg.get("req"), "ok": True, "message": message}))
+            else:
+                payload = await asyncio.to_thread(add_pem, str(msg.get("pem") or ""))
+                await ws.send(json.dumps({"type": "certs_done", "req": msg.get("req"), "ok": True, **payload}))
+        except Exception as exc:
+            await ws.send(json.dumps({"type": "certs_done", "req": msg.get("req"), "ok": False, "detail": str(exc)}))
 
     def _apply_welcome(self, msg: dict) -> None:
         status = msg.get("status") or "pending"

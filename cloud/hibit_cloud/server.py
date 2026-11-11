@@ -1169,6 +1169,45 @@ async def device_network_apply(device_id: str, request: Request):
     return {"ok": True, "message": result.get("message") or "Gespeichert."}
 
 
+async def _device_certs(device_id: str, message: dict, timeout: float):
+    try:
+        result = await hub.request(device_id, message, timeout=timeout)
+    except TimeoutError as exc:
+        raise HTTPException(504, "Das Gerät hat nicht rechtzeitig geantwortet.") from exc
+    except RuntimeError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    if result.get("ok") is False:
+        raise HTTPException(400, result.get("detail") or "Das Zertifikat konnte nicht gespeichert werden.")
+    return result
+
+
+@app.get("/api/devices/{device_id}/certs")
+async def device_certs(device_id: str, request: Request):
+    _require_device(request.state.user, device_id, adopted=True)
+    return await _device_certs(device_id, {"type": "certs_list"}, 12)
+
+
+@app.post("/api/devices/{device_id}/certs/inspect")
+async def device_certs_inspect(device_id: str, request: Request):
+    _require_device(request.state.user, device_id, adopted=True)
+    data = await _json(request)
+    return await _device_certs(device_id, {"type": "certs_inspect", "host": str(data.get("host") or "")}, 20)
+
+
+@app.post("/api/devices/{device_id}/certs")
+async def device_certs_add(device_id: str, request: Request):
+    _require_device(request.state.user, device_id, adopted=True)
+    data = await _json(request)
+    return await _device_certs(device_id, {"type": "certs_add", "pem": str(data.get("pem") or "")}, 15)
+
+
+@app.delete("/api/devices/{device_id}/certs/{cert_id}")
+async def device_certs_remove(device_id: str, cert_id: str, request: Request):
+    _require_device(request.state.user, device_id, adopted=True)
+    result = await _device_certs(device_id, {"type": "certs_remove", "id": cert_id}, 12)
+    return {"ok": True, "message": result.get("message") or "Zertifikat entfernt."}
+
+
 @app.post("/api/devices/{device_id}/power")
 async def device_power(device_id: str, request: Request):
     _require_device(request.state.user, device_id, adopted=True)
