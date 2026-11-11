@@ -106,12 +106,20 @@ def inspect_host(host: str) -> dict:
     blocks = _blocks((proc.stdout or "") + "\n" + (proc.stderr or ""))
     if not blocks:
         raise RuntimeError("Die Adresse hat kein Zertifikat geschickt.")
-    described = [describe_pem(block) for block in blocks]
+    described = []
+    for block in blocks:
+        try:
+            described.append(describe_pem(block))
+        except ValueError:
+            described.append(None)
     leaf = described[0]
-    signer = next((item for item in described[1:] if item["subject"] == leaf["issuer"]), None)
-    if signer is None and len(described) > 1:
-        signer = described[-1]
-    if signer is None or signer["id"] == leaf["id"]:
+    later = [item for item in described[1:] if item]
+    signer = None
+    if leaf is not None:
+        signer = next((item for item in later if item["subject"] == leaf["issuer"]), None)
+    if signer is None and later:
+        signer = later[-1]
+    if signer is None or (leaf is not None and signer["id"] == leaf["id"]):
         raise RuntimeError(
             "Der Server schickt nur sein eigenes Zertifikat, nicht das der Firewall. "
             "Bitte die Zertifikatsdatei der Firewall hochladen."
