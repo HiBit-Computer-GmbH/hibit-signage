@@ -561,7 +561,7 @@ async def handle(scheme: str, host: str, path: str, request: Request) -> Respons
         try:
             return await asyncio.to_thread(_fetch, request.method.upper(), target, headers, body)
         except Exception:
-            log.warning("Webseite nicht erreichbar: %s", urlparse(target).netloc)
+            log.warning("Webseite nicht erreichbar: %s", urlparse(target).netloc, exc_info=True)
             return _plain("Die Seite ist nicht erreichbar.", 502)
     finally:
         _COLOR.reset(token)

@@ -149,6 +149,11 @@ def client_context() -> ssl.SSLContext:
         if _CTX is not None and stamp == _STAMP:
             return _CTX
         ctx = ssl.create_default_context()
+        # Python 3.13 verlangt die Authority-Key-ID. Firewall-Zertifikate
+        # wie WatchGuard lassen sie weg; curl akzeptiert dieselben Ketten.
+        strict = getattr(ssl, "VERIFY_X509_STRICT", 0)
+        if strict:
+            ctx.verify_flags &= ~strict
         bundle = _bundle()
         if bundle:
             ctx.load_verify_locations(cadata=bundle)
