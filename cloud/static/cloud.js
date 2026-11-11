@@ -636,7 +636,7 @@ function certsHtml() {
   return `<section class="card panel" id="cert-panel">
     <h2>Zertifikate</h2>
     <p class="muted">Wenn eine Firewall HTTPS prüft und ein eigenes Zertifikat einsetzt, vertraut der Player den Seiten erst, nachdem das Zertifikat der Firewall hier liegt.</p>
-    <div class="row"><label>Adresse<input id="cert-host" value="${esc(state.certHost || "")}" placeholder="uptimekuma.hibit.de"></label><button class="ghost" id="cert-inspect" type="button">Anzeigen</button></div>
+    <div class="row"><label>Adresse<input id="cert-host" value="${esc(state.certHost || "")}" placeholder="monitor.example.com"></label><button class="ghost" id="cert-inspect" type="button">Anzeigen</button></div>
     ${offerHtml}
     <form id="cert-file" class="row"><label>PEM-Datei<input name="file" type="file" accept=".pem,.crt,.cer,text/plain"></label><button class="ghost" type="submit">Hochladen</button></form>
     <div class="list">${rows || '<p class="muted">Noch keines.</p>'}</div>
