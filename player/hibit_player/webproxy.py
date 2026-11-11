@@ -81,6 +81,7 @@ _PASS_HEADERS = {
 _BOOTSTRAP = """
 (function () {
   const REAL = __REAL__;
+  const PAGE = __PAGE__;
   const ORIGIN = location.origin;
   const FORCE = __SCHEME__;
   window.__hibitProxy = true;
@@ -230,7 +231,7 @@ _BOOTSTRAP = """
   const pushState = history.pushState;
   const replaceState = history.replaceState;
   try {
-    const wanted = visible(REAL);
+    const wanted = visible(PAGE);
     const now = location.pathname + location.search + location.hash;
     if (wanted && wanted !== now) replaceState.call(history, history.state, "", wanted);
   } catch (e) {}
@@ -498,6 +499,7 @@ def _split_query(query: str) -> tuple[str, str]:
 
 def rewrite_html(html: str, page_url: str) -> str:
     base = _document_base(html, page_url)
+    html, bases = _mask_bases(html)
     html = _rewrite_meta(html, base)
     html = _rewrite_attrs(html, base, ("src", "href", "action", "poster", "formaction"))
     html = _rewrite_srcset(html, base)
@@ -509,9 +511,15 @@ def rewrite_html(html: str, page_url: str) -> str:
         html,
         flags=re.I | re.S,
     )
-    real = json.dumps(base).replace("<", "\\u003c")
-    script = _BOOTSTRAP.replace("__REAL__", real).replace("__SCHEME__", json.dumps(_COLOR.get() if _COLOR.get() in {"dark", "light"} else ""))
     html = _keep_referrer(html)
+    html = _unmask_bases(html, bases)
+    real = json.dumps(base).replace("<", "\\u003c")
+    page = json.dumps(page_url).replace("<", "\\u003c")
+    script = (
+        _BOOTSTRAP.replace("__PAGE__", page)
+        .replace("__REAL__", real)
+        .replace("__SCHEME__", json.dumps(_COLOR.get() if _COLOR.get() in {"dark", "light"} else ""))
+    )
     return f'<script data-hibit-proxy="1">{script}</script>{html}'
 
 
@@ -805,6 +813,22 @@ def _escape(value: str) -> str:
         .replace(">", "&gt;")
         .replace('"', "&quot;")
     )
+
+
+def _mask_bases(html: str) -> tuple[str, list[str]]:
+    found: list[str] = []
+
+    def repl(match: re.Match) -> str:
+        found.append(match.group(0))
+        return f"<!--hibit-base-{len(found) - 1}-->"
+
+    return re.sub(r"<base\b[^>]*>", repl, html, flags=re.I), found
+
+
+def _unmask_bases(html: str, found: list[str]) -> str:
+    for index, tag in enumerate(found):
+        html = html.replace(f"<!--hibit-base-{index}-->", tag, 1)
+    return html
 
 
 def _document_base(html: str, page_url: str) -> str:
