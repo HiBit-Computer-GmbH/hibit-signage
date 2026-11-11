@@ -254,7 +254,7 @@ function reuseWeb(item, duration) {
   if (!src) return false;
   const current = webFrames[webSlot];
   const frame = [current].concat(webFrames.filter((entry) => entry !== current))
-    .find((entry) => entry.getAttribute("src") === src && webFrameReady(entry));
+    .find((entry) => entry.getAttribute("src") === src && webFrameReady(entry) && !webDocumentFailed(entry));
   if (!frame) return false;
   applyColorScheme(frame, item);
   webClip.hidden = false;
@@ -308,6 +308,14 @@ function play() {
       window.setTimeout(() => {
         if (token !== generation) return;
         clearTimeout(timer);
+        if (webDocumentFailed(frame)) {
+          dropFailedWeb(frame);
+          for (const other of webFrames) {
+            if (webDocumentFailed(other)) dropFailedWeb(other);
+          }
+          fail();
+          return;
+        }
         if (webLooksEmpty(frame)) {
           if (webFrames[webSlot].hidden || webFrames[webSlot] === frame) {
             hold(item.name ? `„${item.name}“ bleibt leer` : "Die Seite bleibt leer");
@@ -427,6 +435,24 @@ function webLooksEmpty(frame) {
   } catch (error) {
     return false;
   }
+}
+
+function webDocumentFailed(frame) {
+  try {
+    const doc = frame.contentDocument;
+    if (!doc || !doc.body) return false;
+    const text = `${doc.title || ""} ${(doc.body.innerText || "")}`.replace(/\s+/g, " ").trim();
+    return /Die Seite ist nicht erreichbar|Proxy Error|Error reading from remote server|Bad Gateway|502 Proxy/i.test(text);
+  } catch (error) {
+    return false;
+  }
+}
+
+function dropFailedWeb(frame) {
+  frame.hidden = true;
+  frame.onload = null;
+  resetMotion(frame);
+  if (frame.getAttribute("src")) frame.removeAttribute("src");
 }
 
 image.addEventListener("error", () => {
