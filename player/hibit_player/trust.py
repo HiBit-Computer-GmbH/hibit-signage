@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 import shutil
 import ssl
 import subprocess
+import sys
 import threading
 from pathlib import Path
 
@@ -67,7 +69,11 @@ def add_pem(pem: str) -> dict:
             record.pop("pem", None)
             saved.append(record)
         _drop_context()
-    return {"certs": saved, "message": "Zertifikat gespeichert. Der Player vertraut diesem Aussteller jetzt."}
+    system = _sync_system()
+    message = "Zertifikat gespeichert. Der Player vertraut diesem Aussteller jetzt."
+    if system:
+        message = "Zertifikat gespeichert. Der Player und die Systemupdates vertrauen diesem Aussteller jetzt."
+    return {"certs": saved, "message": message}
 
 
 def remove_cert(cert_id: str) -> str:
@@ -79,6 +85,7 @@ def remove_cert(cert_id: str) -> str:
             raise ValueError("Dieses Zertifikat ist nicht gespeichert.")
         path.unlink()
         _drop_context()
+    _sync_system()
     return "Zertifikat entfernt."
 
 
@@ -236,6 +243,18 @@ def _stamp() -> tuple:
     if not folder.is_dir():
         return ()
     return tuple(sorted((path.name, path.stat().st_mtime_ns) for path in folder.glob("*.pem")))
+
+
+def _sync_system() -> bool:
+    script = Path("/usr/local/sbin/hibit-trust")
+    if not script.is_file() or not sys.platform.startswith("linux"):
+        return False
+    command = [str(script)] if hasattr(os, "geteuid") and os.geteuid() == 0 else ["sudo", "-n", str(script)]
+    try:
+        proc = subprocess.run(command, capture_output=True, text=True, timeout=40)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return proc.returncode == 0
 
 
 def _drop_context() -> None:

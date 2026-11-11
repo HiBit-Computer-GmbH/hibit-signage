@@ -1,0 +1,17 @@
+#!/bin/bash
+# Kopiert die vom Player gespeicherten Aussteller in den Systemspeicher.
+set -euo pipefail
+DATA="${HIBIT_DATA_DIR:-/var/lib/hibit-signage}"
+SRC="$DATA/trust"
+DEST=/usr/local/share/ca-certificates
+mkdir -p "$DEST"
+find "$DEST" -maxdepth 1 -type f -name 'hibit-*.crt' -delete
+if [[ -d "$SRC" ]]; then
+  for file in "$SRC"/*.pem; do
+    [[ -f "$file" ]] || continue
+    name="$(basename "$file" .pem)"
+    [[ "$name" =~ ^[a-f0-9]{16}$ ]] || continue
+    cp "$file" "$DEST/hibit-$name.crt"
+  done
+fi
+update-ca-certificates >/dev/null
