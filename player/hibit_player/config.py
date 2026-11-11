@@ -4,7 +4,7 @@ import os
 import sys
 from pathlib import Path
 
-VERSION_FALLBACK = "1.1.24"
+VERSION_FALLBACK = "1.1.25"
 
 
 def install_dir() -> Path:

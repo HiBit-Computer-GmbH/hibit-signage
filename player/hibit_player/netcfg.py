@@ -160,6 +160,8 @@ def apply(data: dict) -> str:
             "ipv4.addresses", "",
             "ipv4.gateway", "",
             "ipv4.dns", "",
+            "ipv4.ignore-auto-dns", "no",
+            "ipv6.ignore-auto-dns", "no",
         )
     else:
         _nm(
@@ -168,6 +170,8 @@ def apply(data: dict) -> str:
             "ipv4.addresses", f"{clean['address']}/{clean['prefix']}",
             "ipv4.gateway", clean["gateway"],
             "ipv4.dns", ",".join(clean["dns"]),
+            "ipv4.ignore-auto-dns", "yes",
+            "ipv6.ignore-auto-dns", "yes",
         )
     if current["kind"] == "wifi" and clean["ssid"]:
         args = ["connection", "modify", uuid, "802-11-wireless.ssid", clean["ssid"]]
