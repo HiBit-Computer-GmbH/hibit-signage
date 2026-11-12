@@ -200,15 +200,20 @@ _BOOTSTRAP = """
     const beacon = navigator.sendBeacon.bind(navigator);
     navigator.sendBeacon = function (url, data) { return beacon(proxied(url), data); };
   }
+  function mediaSrc(value) {
+    const raw = String(value == null ? "" : value).trim();
+    if (/^https?:\/\//i.test(raw)) return raw;
+    return proxied(value);
+  }
   const setAttribute = Element.prototype.setAttribute;
   Element.prototype.setAttribute = function (name, value) {
     const key = String(name).toLowerCase();
     if (typeof value === "string" && (key === "src" || key === "href" || key === "action" || key === "poster" || key === "formaction")) {
-      value = proxied(value);
+      value = key === "src" && this instanceof HTMLImageElement ? mediaSrc(value) : proxied(value);
     }
     return setAttribute.call(this, name, value);
   };
-  function patch(proto, prop) {
+  function patch(proto, prop, direct) {
     if (!proto) return;
     const desc = Object.getOwnPropertyDescriptor(proto, prop);
     if (!desc || !desc.set || !desc.get) return;
@@ -217,12 +222,14 @@ _BOOTSTRAP = """
       enumerable: desc.enumerable,
       get: desc.get,
       set: function (value) {
-        desc.set.call(this, typeof value === "string" ? proxied(value) : value);
+        const next = typeof value === "string" ? (direct ? mediaSrc(value) : proxied(value)) : value;
+        desc.set.call(this, next);
       }
     });
   }
-  [window.HTMLImageElement, window.HTMLScriptElement, window.HTMLIFrameElement, window.HTMLSourceElement, window.HTMLMediaElement, window.HTMLEmbedElement, window.HTMLObjectElement].forEach(function (ctor) {
-    if (ctor) patch(ctor.prototype, "src");
+  if (window.HTMLImageElement) patch(HTMLImageElement.prototype, "src", true);
+  [window.HTMLScriptElement, window.HTMLIFrameElement, window.HTMLSourceElement, window.HTMLMediaElement, window.HTMLEmbedElement, window.HTMLObjectElement].forEach(function (ctor) {
+    if (ctor) patch(ctor.prototype, "src", false);
   });
   if (window.HTMLObjectElement) patch(HTMLObjectElement.prototype, "data");
   if (window.HTMLLinkElement) patch(HTMLLinkElement.prototype, "href");
@@ -534,12 +541,12 @@ def build_upstream(scheme: str, host: str, path: str, query: str) -> str:
     return url
 
 
-def authorize(target: str, referer: str | None, *, follow: bool = False) -> str | None:
+def authorize(target: str, referer: str | None, *, follow: bool = False, request_host: str = "") -> str | None:
     reason = reject_target(target)
     if reason:
         return reason
     host = _hostname(urlparse(target).netloc)
-    if follow or _listed(host) or _known(host) or _from_player(referer or ""):
+    if follow or _listed(host) or _known(host) or _from_player(referer or "") or _on_restored_page(referer or "", request_host):
         _remember(host)
         return None
     ref_host = _referer_host(referer or "")
@@ -559,7 +566,7 @@ async def handle(scheme: str, host: str, path: str, request: Request) -> Respons
             return _plain("Die Adresse ist ungültig.", 400)
         if scheme not in {"http", "https"}:
             return _plain("Die Adresse ist ungültig.", 400)
-        reason = authorize(target, request.headers.get("referer"))
+        reason = authorize(target, request.headers.get("referer"), request_host=request.headers.get("host") or "")
         if reason:
             return _plain(reason, 403)
         body = await request.body()
@@ -586,7 +593,7 @@ async def handle_ws(ws: WebSocket, scheme: str, host: str, path: str) -> None:
     except ValueError:
         await ws.close(code=1008)
         return
-    if authorize(target, ws.headers.get("referer")):
+    if authorize(target, ws.headers.get("referer"), request_host=ws.headers.get("host") or ""):
         await ws.close(code=1008)
         return
     ws_target = scheme + target[len(http_scheme) :]
@@ -967,6 +974,18 @@ def _listed(host: str) -> bool:
 def _from_player(referer: str) -> bool:
     path = urlparse(referer).path.rstrip("/")
     return path == "/player"
+
+
+def _on_restored_page(referer: str, request_host: str) -> bool:
+    """Die Seite zeigt ihre eigene Adresse. Bilder von dort gehören trotzdem zur Warteschlange."""
+    parsed = urlparse(referer or "")
+    host = (request_host or "").strip().lower()
+    if not host or (parsed.netloc or "").lower() != host:
+        return False
+    path = parsed.path or "/"
+    if path.startswith(("/player", "/console", "/api/", "/media/")) or path in {"/", ""}:
+        return False
+    return True
 
 
 def _known(host: str) -> bool:
